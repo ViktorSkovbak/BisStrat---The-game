@@ -1,0 +1,224 @@
+# The Foundry curriculum map: tracks, areas, phases and the machine part each area builds.
+# `phase` is the default teaching order (1 = first). `plot` is the part's place on the
+# isometric floor (column, row); the strategy core sits at the centre (0, 0).
+# `part` picks the renderer's model in web/machine.js.
+
+[[track]]
+id = "strategy_core"
+name = "Strategy core"
+
+[[track]]
+id = "economics"
+name = "Business economics"
+
+[[track]]
+id = "venture"
+name = "Venture"
+
+[[track]]
+id = "ops_systems"
+name = "Operations & systems"
+
+[[track]]
+id = "people"
+name = "People & organisation"
+
+[[track]]
+id = "judgement"
+name = "Judgement"
+
+# --- Strategy core -------------------------------------------------------------
+[[area]]
+id = "strategy"
+name = "Business strategy"
+track = "strategy_core"
+phase = 2
+part = "core"
+part_name = "Strategy core"
+plot = [0, 0]
+spine = "Rumelt, Porter, Helmer, Christensen"
+
+[[area]]
+id = "competition"
+name = "Competitive dynamics & game theory"
+track = "strategy_core"
+phase = 2
+part = "walls"
+part_name = "Moat walls"
+plot = [-1, -1]
+spine = "Porter, Helmer, Brandenburger & Nalebuff, Schelling"
+
+[[area]]
+id = "growth"
+name = "Growth strategy"
+track = "strategy_core"
+phase = 2
+part = "piston"
+part_name = "Growth piston"
+plot = [-2, -1]
+spine = "Ansoff, Christensen, Bass diffusion, network effects"
+
+# --- Business economics --------------------------------------------------------
+[[area]]
+id = "anatomy"
+name = "Business anatomy"
+track = "economics"
+phase = 2
+part = "assay"
+part_name = "Assay office"
+plot = [0, -1]
+spine = "P&L, balance sheet, cash conversion, value chain"
+
+[[area]]
+id = "unit_econ"
+name = "Unit economics & cost curves"
+track = "economics"
+phase = 1
+part = "furnace"
+part_name = "Furnace"
+plot = [1, -1]
+spine = "Wright's law, contribution margin, target cost"
+
+[[area]]
+id = "pricing"
+name = "Pricing"
+track = "economics"
+phase = 2
+part = "press"
+part_name = "Pricing press"
+plot = [2, -2]
+spine = "Value-based pricing, price discrimination, Ramanujam"
+
+[[area]]
+id = "capital"
+name = "Capital allocation & corporate finance"
+track = "economics"
+phase = 2
+part = "vault"
+part_name = "Vault"
+plot = [1, -2]
+spine = "Thorndike, Buffett letters, ROIC vs WACC, Modigliani-Miller"
+
+# --- Venture -------------------------------------------------------------------
+[[area]]
+id = "venture"
+name = "Venture finance"
+track = "venture"
+phase = 1
+part = "gallery"
+part_name = "Investor gallery"
+plot = [-1, -2]
+spine = "Power-law returns, fund math, Kerr-Nanda-Rhodes-Kropf"
+
+[[area]]
+id = "fundraising"
+name = "Fundraising & grants"
+track = "venture"
+phase = 3
+part = "crane"
+part_name = "Capital crane"
+plot = [-2, -2]
+spine = "Term sheets, dilution, EIC and national grants, milestones"
+
+[[area]]
+id = "exits"
+name = "M&A & exits"
+track = "venture"
+phase = 4
+part = "dock"
+part_name = "Exit dock"
+plot = [0, -2]
+spine = "Strategic vs financial buyers, synergies, the winner's curse"
+
+# --- Operations & systems ------------------------------------------------------
+[[area]]
+id = "operations"
+name = "Operations & queueing"
+track = "ops_systems"
+phase = 1
+part = "floor"
+part_name = "Production floor"
+plot = [1, 0]
+spine = "Kingman, Little, Goldratt, Factory Physics"
+
+[[area]]
+id = "systems"
+name = "Systems thinking"
+track = "ops_systems"
+phase = 3
+part = "pipes"
+part_name = "Feedback pipes"
+plot = [2, -1]
+spine = "Forrester, Meadows, Sterman"
+
+# --- People & organisation -----------------------------------------------------
+[[area]]
+id = "leadership"
+name = "Leadership"
+track = "people"
+phase = 3
+part = "bridge"
+part_name = "Bridge"
+plot = [-2, 0]
+spine = "Grove, Horowitz, research on founder-CEOs"
+
+[[area]]
+id = "management"
+name = "Management"
+track = "people"
+phase = 3
+part = "control"
+part_name = "Control room"
+plot = [-1, 0]
+spine = "Grove (High Output Management), managerial leverage, OKRs"
+
+[[area]]
+id = "org"
+name = "Org design & incentives"
+track = "people"
+phase = 1
+part = "gears"
+part_name = "Gear train"
+plot = [-2, 1]
+spine = "Peter principle, principal-agent, Holmstrom, tournaments"
+
+[[area]]
+id = "negotiation"
+name = "Negotiation"
+track = "people"
+phase = 3
+part = "table"
+part_name = "Negotiation table"
+plot = [-1, 1]
+spine = "Fisher & Ury, BATNA, Raiffa, anchoring"
+
+# --- Judgement -----------------------------------------------------------------
+[[area]]
+id = "forecasting"
+name = "Decisions under uncertainty & forecasting"
+track = "judgement"
+phase = 1
+part = "observatory"
+part_name = "Observatory"
+plot = [0, 1]
+spine = "Tetlock, Kahneman & Lovallo, Bayes, expected value"
+
+[[area]]
+id = "behavioural"
+name = "Behavioural economics"
+track = "judgement"
+phase = 4
+part = "filters"
+part_name = "Bias filters"
+plot = [1, 1]
+spine = "Kahneman & Tversky, Thaler, Munger's misjudgement list"
+
+[[area]]
+id = "communication"
+name = "Communicating strategy"
+track = "judgement"
+phase = 4
+part = "tower"
+part_name = "Signal tower"
+plot = [2, 1]
+spine = "Minto pyramid, Amazon six-pagers, Rumelt's kernel as a memo"
