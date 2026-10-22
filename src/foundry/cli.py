@@ -130,7 +130,8 @@ def cmd_export(args: argparse.Namespace) -> int:
     state = _state(args.log, args.today)
     data = export.build(state, tracks, areas, next_pick(state, areas, load_items()))
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    args.out.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8",
+                        newline="\n")
     print(f"Wrote {args.out}")
     return 0
 
