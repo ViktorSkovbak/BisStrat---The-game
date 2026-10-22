@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Wright Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model: Wright's law plus a simple demand curve and a fixed monthly team cost ---------- */
+const REF = 4000;   // price at which "pilot orders per month" is measured
+const ELAST = 1.5;  // assumption: a 10% price cut adds about 15% demand
+const eur = (v) => "€" + Math.round(v).toLocaleString("en-US");
+const eurK = (v) => (v >= 1e6 ? "€" + (v / 1e6).toFixed(2) + "M" : "€" + Math.round(v / 1000) + "k");
+const slope = (p) => -Math.log2(p.learn);                                  // cost exponent: 85% curve -> 0.234
+const costAt = (p, n) => p.first * Math.pow(Math.max(1, n), -slope(p));      // cost of the n-th unit
+
+function model(p) {
+  const b = slope(p);
+  const rate = Math.min(p.cap, p.volume * Math.pow(REF / p.price, ELAST));   // units sold and built per month
+  const units = p.first <= p.target ? 1 : Math.pow(p.first / p.target, 1 / b);
+  const months = units / rate;
+  const spend = (p.first * (Math.pow(units, 1 - b) - 1)) / (1 - b);           // cost of units 2..N
+  const cash = p.burn * months - (p.price * (units - 1) - spend);             // team cost minus margin until target cost
+  const capital = Math.max(0, cash);
+  const caption = `Unit cost falls from ${eur(p.first)} to ${eur(p.target)} after about ${fmt(units)} units (${fmt(Math.log2(units), 1)} doublings). At ${fmt(rate, 1)} units a month that takes ${fmt(months)} months and about ${eurK(capital)} of cash.`;
+  return { values: { months, units, doublings: Math.log2(units), capital, rate }, caption };
+}
+
+/* ---------- The line: furnace, conveyor, a pile of finished units and a falling unit-cost gauge ---------- */
+function scene(k) {
+  const { THREE, box, cyl, sphere, mats, glow } = k;
+  const fire = glow(2);
+  const okMat = new THREE.MeshStandardMaterial({ color: 0x0a2012, emissive: 0x6fd08c, emissiveIntensity: 1.8 });
+  box(7, 4, 6, mats.dark, -11, 0, 0);            // furnace
+  cyl(0.8, 4, mats.steel, -12.5, 4, -1.5);       // chimney
+  box(0.3, 1.8, 3.4, fire, -7.4, 0.6, 0);        // glowing mouth: brighter when the line runs fuller
+  box(14, 0.3, 1.8, mats.belt, -0.5, 0, 0);      // conveyor
+  box(8.6, 0.2, 7.6, mats.dark, 12, 0, 0);       // pallet area
+  box(0.4, 8.6, 2.8, mats.dark, -1, 0, -8);      // gauge back plate
+  const bar = box(0.9, 1, 1.6, mats.cool, -0.6, 0, -8);
+  const mark = box(1.3, 0.12, 2.3, mats.brass, -0.6, 0, -8);
+  const people = Array.from({ length: 10 }, (_, i) => {
+    cyl(0.25, 0.6, mats.steel, -12 + i * 1.2, 0, 6.5);
+    return sphere(0.3, glow(2.4), -12 + i * 1.2, 1.1, 6.5);  // one light per ~€10k of monthly team cost
+  });
+  const geo = new THREE.BoxGeometry(0.7, 0.45, 0.7);
+  const slots = Array.from({ length: 160 }, (_, i) => {
+    const m = new THREE.Mesh(geo, mats.brass), l = Math.floor(i / 40), j = i % 40;
+    m.castShadow = true; m.visible = false;
+    m.position.set(8.7 + (j % 8) * 0.95, 0.425 + l * 0.46, -1.9 + Math.floor(j / 8) * 0.95);
+    k.scene.add(m);
+    return m;
+  });
+  let items = [], S = { t: 0, hold: 0, acc: 0 }, P = null, R = null;
+  k.onTick((dt, now) => {
+    if (!P) return;
+    const rate = R.values.rate;
+    if (S.hold > 0) { S.hold -= dt; if (S.hold <= 0) S = { t: 0, hold: 0, acc: 0 }; }
+    else {
+      S.t += dt * 3; S.acc += dt * 3 * rate;                      // 3 months pass every second
+      if (costAt(P, rate * S.t) <= P.target || S.t >= 60) S.hold = 2.5;
+    }
+    const n = rate * S.t, cost = costAt(P, n), step = Math.max(1, (rate * 3) / 8);
+    while (S.acc >= step) {
+      S.acc -= step;
+      const m = new THREE.Mesh(geo, mats.brass); m.position.set(-7, 0.52, 0); m.castShadow = true;
+      k.scene.add(m); items.push(m);
+    }
+    items = items.filter((m) => { m.position.x += dt * 12; if (m.position.x > 8.2) { k.scene.remove(m); return false; } return true; });
+    slots.forEach((m, i) => { m.visible = i < Math.floor(n); });
+    fire.emissiveIntensity = 0.4 + 2.6 * Math.min(1, rate / P.cap) + 0.2 * Math.sin(now * 9);
+    people.forEach((s, i) => { s.visible = i < P.burn / 10000; s.material.emissiveIntensity = 1.8 + 0.6 * Math.sin(now * 2 + i); });
+    const h = (8 * cost) / REF;
+    bar.scale.y = h; bar.position.y = h / 2; bar.material = cost <= P.target ? okMat : mats.cool;
+    k.hud.innerHTML = `<span>Month <b>${Math.floor(S.t)}</b></span><span>Units built <b>${fmt(n, 0)}</b></span><span>Unit cost <b>${eur(cost)}</b></span><span>Target <b>${eur(P.target)}</b></span>`;
+  });
+  return { update(p, r) { P = p; R = r; S = { t: 0, hold: 0, acc: 0 }; mark.position.y = (8 * p.target) / REF + 0.06; } };
+}
+
+createLab({
+  id: "L03",
+  area: "Unit economics & cost curves",
+  title: "Wright's law",
+  goal: "Decide <b>how to get your unit cost down</b>: which lever is fastest, how far to cut the pilot price, and how ambitious a target cost you can reach inside your funding.",
+  story: "It is early 2027 and you are founding a hardware company. Your first units cost about <b>€4,000</b> each to build; the product only makes sense at around <b>€1,000</b>. Your engineers say cost falls by 10-20% every time the number of units built doubles. The team costs about <b>€50k a month</b>, pilot customers order about <b>10 units a month</b>, and your first line can build at most <b>30 a month</b>. You choose; the page counts.",
+  params: [
+    { key: "first", label: "Cost of the first units", min: 2000, max: 6000, step: 250, value: 4000, format: eur },
+    { key: "learn", label: "How fast cost falls", options: [{ value: 0.8, label: "−20% per doubling" }, { value: 0.85, label: "−15%" }, { value: 0.9, label: "−10%" }, { value: 0.95, label: "−5%" }], value: 0.85, hint: "Each time total units built doubles. Solar modules and lithium-ion cells have fallen about 20%; aerospace is often put near 15%." },
+    { key: "volume", label: "Pilot orders per month at €4,000", min: 2, max: 40, step: 1, value: 10, format: (v) => String(v) },
+    { key: "price", label: "Price per unit", min: 1000, max: 5000, step: 250, value: 4000, format: eur, hint: "Assumption in the model: each 10% price cut adds about 15% demand, up to the line's capacity." },
+    { key: "target", label: "Target cost", min: 500, max: 2000, step: 100, value: 1000, format: eur },
+    { key: "cap", label: "Line capacity (units per month)", min: 10, max: 60, step: 5, value: 30, format: (v) => String(v) },
+    { key: "burn", label: "Team cost per month", min: 20000, max: 100000, step: 5000, value: 50000, format: eurK },
+  ],
+  metrics: [
+    { key: "months", label: "Time to target cost", unit: "months" },
+    { key: "units", label: "Units to build first", unit: "units" },
+    { key: "doublings", label: "Doublings needed", unit: "×2" },
+    { key: "capital", label: "Cash needed to get there", format: (v) => eurK(v) },
+    { key: "rate", label: "Units per month", unit: "/mo" },
+  ],
+  model,
+  chart: {
+    title: "Unit cost over time",
+    xLabel: "months from the first pilot unit", yLabel: "cost per unit (€)",
+    xMin: 0, xMax: 48, yMin: 0,
+    xFormat: (v) => String(Math.round(v)),
+    series: (p, r) => {
+      const pts = [];
+      for (let t = 0; t <= 48; t += 0.5) pts.push([t, costAt(p, r.values.rate * t)]);
+      return [
+        { name: "cost of the latest unit", color: "brass", points: pts },
+        { name: "target cost", color: "ok", dashed: true, points: [[0, p.target], [48, p.target]] },
+      ];
+    },
+    marker: (p, r) => (r.values.months <= 48 ? [r.values.months, p.target] : null),
+    note: "Illustrative model: the cost of the n-th unit is the first-unit cost times n to a negative power set by the learning rate, with demand rising 15% for every 10% price cut up to line capacity, and a fixed team cost per month. The 80-90% range matches the evidence: solar modules and lithium-ion cells fell about 20% per doubling (80% curve). Real curves wobble, stall and get overtaken.",
+  },
+  stage: { floor: [34, 22], view: 22 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. The fastest way down",
+      situation: "Your units cost €4,000 and you need €1,000. At today's pace (10 a month, cost falling 15% per doubling) that takes about 370 units, or 37 months. You can fund <b>one</b> push this year. Which gets to €1,000 soonest?",
+      baseline: {},
+      options: [
+        { id: "A", label: "Land a big early order", detail: "Pilot volume triples to 30 units a month, the line's capacity", params: { volume: 30 } },
+        { id: "B", label: "Redesign for manufacture", detail: "Fewer parts, easier assembly: cost falls 20% per doubling instead of 15%", params: { learn: 0.8 } },
+        { id: "C", label: "Start from a cheaper first unit", detail: "Simpler first design costing €3,000 instead of €4,000", params: { first: 3000 } },
+      ],
+      rankBy: "months", better: "lower",
+      learning: "<p><b>Redesign for manufacture wins, and the instinct (volume) is last.</b> Today you need about 370 units (8.5 doublings), 37 months. B cuts that to 74 units and <b>7.4 months (5.0× faster)</b>. C needs 108 units and 10.8 months (3.4×). A needs the same 370 units and only runs the clock three times faster: 12.3 months (3.0×).</p><p><b>Why:</b> volume only speeds up the clock. The learning rate sits in the exponent, so a few points there change how many units you need by a factor of five. The first-unit cost matters too, but less. Volume still helps your cash (at €4,000 a big order pays for itself), so take it if you can win it, but orders do not replace redesign.</p><p><b>Rule of thumb:</b> first lower the units you need (learning rate, starting cost), then raise the speed at which you build them. Check that redesign really delivers those five points: this is the assumption to test.</p>",
+    },
+    {
+      title: "Test 2. Pilot price",
+      situation: "You sell pilot units at €4,000, roughly what they cost today. A rival with an older product sells near €3,000. Each 10% price cut adds about 15% demand, until your line is full at 30 units a month. The team costs €50k a month. Where do you price the pilot units?",
+      baseline: {},
+      options: [
+        { id: "A", label: "€4,000, today's cost", detail: "No loss on any unit; 10 pilot orders a month", params: { price: 4000 } },
+        { id: "B", label: "€3,000", detail: "Match the rival", params: { price: 3000 } },
+        { id: "C", label: "€2,000", detail: "Below today's cost, above target cost", params: { price: 2000 } },
+        { id: "D", label: "€1,000, the target cost", detail: "Forward pricing: sell now at the price you want to reach", params: { price: 1000 } },
+      ],
+      rankBy: "capital", better: "lower",
+      question: "Your call: the price that needs the least cash to get your cost down to €1,000?",
+      learning: "<p><b>€2,000 wins; the textbook forward price (€1,000) is not the best.</b> Cash needed to reach €1,000: €4,000 needs about €851k (37 months), €3,000 about €572k (24 months), <b>€2,000 about €394k (13 months, 2.2× less than today)</b>, €1,000 about €725k (12.3 months). The needed cash is U-shaped.</p><p><b>Why:</b> a lower price buys volume, volume brings the cost down sooner and shortens the months you pay the team. At €2,000, demand is about 28 a month: the line is nearly full. Cutting to €1,000 adds nothing (the line is capped at 30) and only gives away margin on every unit.</p><p><b>Rule of thumb:</b> cut the price until demand fills your capacity, and not below. Here that is about €1,900. This assumes the demand response (15% per 10%) is real: test it with two pilot customers before you rely on it.</p>",
+    },
+    {
+      title: "Test 3. How ambitious a target?",
+      situation: "You price at €2,000 and your investors fund <b>24 months</b> of team cost. Your board asks which target cost you will promise to reach inside the round. Each lower target needs more doublings. Which is the most ambitious one you can keep?",
+      baseline: { price: 2000 },
+      options: [
+        { id: "A", label: "€1,500", detail: "About 66 units (6.0 doublings)", params: { target: 1500 } },
+        { id: "B", label: "€1,000", detail: "About 370 units (8.5 doublings)", params: { target: 1000 } },
+        { id: "C", label: "€700", detail: "About 1,700 units (10.7 doublings)", params: { target: 700 } },
+        { id: "D", label: "€500", detail: "About 7,100 units (12.8 doublings)", params: { target: 500 } },
+      ],
+      rankBy: "months", better: "lower", size: false,
+      question: "Your call: the lowest target cost you reach inside the 24 months?",
+      best: (rows) => rows.filter((r) => r.v <= 24).sort((a, b) => a.p.target - b.p.target)[0].id,
+      learning: "<p><b>€1,000 is the most ambitious target that fits.</b> Months to target at 28 units a month: €1,500 takes 2.3 months, <b>€1,000 takes 13</b>, €700 takes 60 and €500 takes 251. Cash needed: about €110k, €394k, €1.15M and €3.0M. Only the first two fit your 24 months.</p><p><b>Why:</b> every time cost halves you need the same number of extra doublings (about 4.3 at this learning rate), which means about 19 times more units. From €1,000 to €500 is 370 units to 7,100. The curve gets easier to read but harder to climb.</p><p><b>Rule of thumb:</b> convert a target cost into units, then into months of runway, before you promise it. A target that needs far more units than you can sell in the round is a plan for the next round, not this one.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Cost falls by a fixed percentage each time total units built double.</b> Solar modules and lithium-ion cells have fallen about 20% per doubling; use 10-20% for planning hardware and test it early.",
+    "<b>Lower the units you need before raising the speed.</b> The learning rate and the starting cost change how many units it takes to reach target cost by a factor of 3 to 5. A big order only speeds up the clock.",
+    "<b>Cut the pilot price until demand fills capacity, then stop.</b> Pricing at today's cost is slow and expensive, and pricing at target cost gives away margin that capacity cannot turn into more learning.",
+    "<b>Every halving of cost needs about 19 times more units at an 85% curve.</b> Turn a target cost into units and months of runway before you promise it, and watch for a rival technology that overtakes your curve.",
+  ],
+});
+</script>
+</body>
+</html>

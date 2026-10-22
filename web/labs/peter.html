@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Peter Principle Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model: who becomes a team lead, and what it does to output ---------- */
+// Illustrative. Each engineer has an engineering skill e (average 0, spread 1) and a managing skill m that is
+// correlated with e by "link". A lead lifts or cuts each report's output by G per unit of m.
+const N = 20, LEADS = 4;   // 20 engineers, 4 team leads of 4 reports each
+const A = 0.3;             // one step of engineering skill = 30% of an average engineer's output (assumption)
+const G = 0.1;             // one step of managing skill = 10% on every report's output (assumption, same order as Benson et al.)
+const VALID = 0.5;         // a management trial reads true managing skill only half-well (assumption)
+const COST = 9;            // EUR k per engineer-month (L01)
+
+const pdf = (x) => Math.exp(-x * x / 2) / Math.sqrt(2 * Math.PI);
+function cdf(x) { // Abramowitz-Stegun approximation
+  const t = 1 / (1 + 0.2316419 * Math.abs(x)), d = pdf(x);
+  const p = d * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return x > 0 ? 1 - p : p;
+}
+function invcdf(p) { let lo = -8, hi = 8; for (let i = 0; i < 50; i++) { const m = (lo + hi) / 2; if (cdf(m) < p) lo = m; else hi = m; } return (lo + hi) / 2; }
+const topAvg = (q) => pdf(invcdf(1 - q)) / q; // average skill of the top share q of a normal group
+
+// rule: 0 best engineer, 1 random, 2 management trial, 3 perfect knowledge (reference only)
+function run(p, rule, ladder, passover) {
+  const link = p.link, coding = p.role ? 0.7 : 0.3;
+  let q = LEADS / N, meanE = 0, sdE = 1;
+  if (ladder) { // the 4 strongest engineers stay engineers and are not in the pool
+    const c = invcdf(1 - LEADS / N), lam = pdf(c) / cdf(c);
+    meanE = -lam; sdE = Math.sqrt(1 - c * lam - lam * lam); q = LEADS / (N - LEADS);
+  }
+  const i = topAvg(q);
+  const meanM = link * meanE, sdM = Math.sqrt(1 - link * link + link * link * sdE * sdE);
+  const rhoE = rule === 0 ? 1 : rule === 1 ? 0 : rule === 2 ? VALID * link : link;
+  const rhoM = rule === 0 ? link : rule === 1 ? 0 : rule === 2 ? VALID : 1;
+  const leadE = meanE + rhoE * sdE * i, leadM = meanM + rhoM * sdM * i;
+  const lift = G * leadM;
+  const leadOut = LEADS * coding * (1 + A * leadE);                 // leads still code part of the time
+  const repOut = (N - LEADS - A * LEADS * leadE) * (1 + lift);      // the rest, under their lead
+  const starAll = LEADS * (1 + A * topAvg(LEADS / N));              // output of the 4 strongest engineers
+  const promoted = ladder ? 0 : Math.min(1, q + (1 - q) * rhoE);    // share of stars who become leads
+  const slump = ladder ? 0 : passover * (1 - promoted);             // passed-over stars slow down
+  const starKeep = 1 - promoted * (1 - coding) - slump;
+  return { out: leadOut + repOut - slump * starAll, leadM, lift, starKeep, starAll };
+}
+
+function model(p) {
+  const r = run(p, p.rule, p.ladder, p.passover);
+  const ref = run(p, 3, 1, 0).out;       // same company, leads picked perfectly for managing, stars left alone
+  const lost = Math.max(0, ref - r.out);
+  const who = ["the best engineers", "people picked at random", "people picked by a management trial"][p.rule];
+  const caption = `${p.ladder ? "The top engineers stay on a technical ladder; leads are " : "Leads are "}${who}. They ${r.lift >= 0 ? "lift" : "cut"} each report's output by ${fmt(Math.abs(r.lift * 100), 1)}%; the top 4 engineers deliver ${fmt(r.starKeep * r.starAll, 1)} of ${fmt(r.starAll, 1)} engineer-equivalents; the company delivers ${fmt(r.out, 1)} of 20.`;
+  return { values: { output: r.out, lost, cost: lost * COST, leadM: r.leadM, lift: r.lift * 100, star: r.starKeep * r.starAll, starShare: r.starKeep }, caption };
+}
+
+/* ---------- The org: glowing workers; brightness is how well they do the job ---------- */
+function scene(k) {
+  const { box, cyl, sphere, glow, mats, onTick } = k;
+  box(21, 0.3, 3.4, mats.steel, 0, 0, 3.5);
+  box(18, 0.45, 1.8, mats.steel, 0, 0, -1.5);
+  box(3.4, 0.6, 2.2, mats.steel, 0, 0, -6);
+  box(15, 0.12, 0.12, mats.dark, 0, 0.5, -3.6);
+  box(0.12, 0.12, 2.5, mats.dark, 0, 0.5, -4.85);
+  sphere(0.7, glow(2), 0, 1.5, -6);
+  box(5, 0.25, 9, mats.steel, 13, 0, 0);
+  const leads = [], engs = [], pillars = [];
+  for (let i = 0; i < LEADS; i++) {
+    const x = (i - 1.5) * 5;
+    box(0.12, 0.12, 5, mats.dark, x, 0.3, 1);
+    cyl(0.35, 0.7, mats.dark, x, 0.45, -1.5);
+    leads.push(sphere(0.6, glow(1), x, 1.75, -1.5));
+    for (let j = 0; j < 4; j++) engs.push(sphere(0.32, glow(1), x + (j - 1.5) * 1.1, 0.7, 3.5));
+    pillars.push(cyl(0.55, 1, mats.cool, 13, 0.25, (i - 1.5) * 2));
+  }
+  const hues = [0xe5573f, 0xffb547, 0x7fe0a0];
+  let base = { lead: 1, eng: 1 };
+  onTick((dt, t) => {
+    leads.forEach((m, i) => { m.material.emissiveIntensity = base.lead * (1 + 0.08 * Math.sin(t * 2 + i)); });
+    engs.forEach((m, i) => { m.material.emissiveIntensity = base.eng * (1 + 0.08 * Math.sin(t * 2.3 + i)); });
+  });
+  return {
+    update(p, r) {
+      const v = r.values;
+      const hue = v.leadM < 0.25 ? hues[0] : v.leadM < 0.6 ? hues[1] : hues[2];
+      leads.forEach((m) => m.material.emissive.setHex(hue));
+      base = { lead: Math.min(3.8, Math.max(0.3, 0.5 + v.leadM * 3)), eng: Math.min(3.5, Math.max(0.3, 1.2 + v.lift * 0.18)) };
+      pillars.forEach((m) => { const h = Math.max(0.2, 5 * v.starShare); m.scale.y = h; m.position.y = 0.25 + h / 2; });
+      k.hud.innerHTML = `<span>Leads' managing skill <b>${v.leadM >= 0 ? "+" : ""}${fmt(v.leadM, 1)}</b></span><span>Engineers' lift <b>${fmt(v.lift, 1)}%</b></span><span>Top-4 output kept <b>${fmt(v.starShare * 100, 0)}%</b></span>`;
+    },
+  };
+}
+
+const lab = createLab({
+  id: "L02",
+  area: "Org design & incentives",
+  title: "The Peter principle",
+  goal: "Decide <b>who becomes a team lead</b>: when to promote your best engineer, when not to, and what to offer the stars you do not make managers.",
+  story: "Early 2028. Your company has <b>20 engineers</b> and needs <b>4 team leads</b>, each leading 4 others. Engineering skill varies a lot between people, and a good or bad lead moves every report's output. Your four strongest engineers expect the job. One engineer-month costs about <b>€9k</b>; the numbers on the page are engineer-equivalents of output. In the scene, the founder sits on top, the leads in the middle row, the engineers in front, and the bench on the right shows how much of your four stars' output you keep.",
+  params: [
+    { key: "rule", label: "How leads are picked", options: [{ value: 0, label: "Best engineers" }, { value: 1, label: "At random" }, { value: 2, label: "Management trial" }], value: 0 },
+    { key: "link", label: "Does engineering skill predict managing skill?", options: [{ value: 0.1, label: "Barely" }, { value: 0.4, label: "Somewhat" }, { value: 0.7, label: "Mostly" }, { value: 0.9, label: "Almost fully" }], value: 0.1, hint: "Correlation between the two skills" },
+    { key: "role", label: "What the lead does", options: [{ value: 0, label: "Mostly manages (codes 30%)" }, { value: 1, label: "Tech lead (codes 70%)" }], value: 0 },
+    { key: "ladder", label: "Career path for stars", options: [{ value: 0, label: "Only management" }, { value: 1, label: "Dual ladder (technical track)" }], value: 0 },
+    { key: "passover", label: "A passed-over star", options: [{ value: 0, label: "Takes it fine" }, { value: 0.08, label: "Slows down 8%" }], value: 0 },
+  ],
+  metrics: [
+    { key: "output", label: "Company output", unit: "of 20", format: (v) => fmt(v, 1) },
+    { key: "lost", label: "Output lost to weak leadership", unit: "eng-equiv.", format: (v) => fmt(v, 1) },
+    { key: "cost", label: "That costs", unit: "€k / month", format: (v) => String(Math.round(v)) },
+    { key: "leadM", label: "Leads' managing skill (0 = typical engineer)", format: (v) => (v >= 0 ? "+" : "") + fmt(v, 1) },
+    { key: "lift", label: "Leads' effect on each report", unit: "%", format: (v) => (v >= 0 ? "+" : "") + fmt(v, 1) },
+    { key: "star", label: "Output of the top 4 engineers", unit: "eng-equiv.", format: (v) => fmt(v, 1) },
+  ],
+  model,
+  chart: {
+    title: "Which rule wins, by how well skills transfer",
+    xLabel: "how well engineering skill predicts managing skill (0 = not at all)", yLabel: "company output (of 20)",
+    xMin: 0, xMax: 0.95, yMin: 15,
+    xFormat: (v) => v.toFixed(1),
+    series(p) {
+      const line = (rule) => { const pts = []; for (let l = 0; l <= 0.951; l += 0.05) pts.push([l, model({ ...p, rule, link: l }).values.output]); return pts; };
+      return [
+        { name: "pick the best engineers", color: "jam", points: line(0) },
+        { name: "pick at random", color: "dim", points: line(1), dashed: true },
+        { name: "pick by a management trial", color: "ok", points: line(2) },
+      ];
+    },
+    marker: (p, r) => [p.link, r.values.output],
+    note: "Illustrative model: 20 engineers, 4 leads; the spread of skill and the size of a lead's effect are assumptions. The shape follows Pluchino et al. (2010): picking the best loses when skills barely transfer and wins when they transfer almost fully (here it passes random at about 0.6 and the trial at about 0.85). The size of a lead's effect (a few percent on each report) is in the range of the Benson, Li &amp; Shue (2019) estimate for promoted salespeople, but not fitted to it.",
+  },
+  stage: { floor: [32, 20], view: 22, target: [1, 0, -1] },
+  scene,
+  tests: [
+    {
+      title: "Test 1. Who gets the lead jobs?",
+      situation: "You need 4 leads from 20 engineers. Engineering skill barely predicts managing skill, and nobody yet expects a title. Today your plan is to promote the four best engineers. Which rule is best?",
+      baseline: { rule: 0, link: 0.1 },
+      options: [
+        { id: "A", label: "The four best engineers", detail: "Highest output wins the job", params: { rule: 0 } },
+        { id: "B", label: "Draw four names at random", detail: "Ignore performance completely", params: { rule: 1 } },
+        { id: "C", label: "Pick by a management trial", detail: "Six weeks of running a project, plus feedback from the team", params: { rule: 2 } },
+      ],
+      rankBy: "lost", better: "lower",
+      learning: "<p><b>Test managing, not engineering.</b> When engineering skill barely predicts managing skill, promoting the best engineers is the <i>worst</i> of the three: you take your top coders off the keyboard and get leads who are only slightly above average at managing. Output lost to weak leadership: best engineers <b>3.2</b> engineer-equivalents (about €29k a month), random <b>2.2</b> (about 1.4× better, €20k), management trial <b>1.2</b> (about <b>2.7×</b> better, €11k). The trial is imperfect, yet its leads still lift each report by about 7%, against 1.4% for the best engineers.</p><p><b>Rule of thumb:</b> promote on evidence of the new job. In simulations (Pluchino et al.), random promotion beats best-first when the old skill does not carry over. The trial beats random because even a noisy read of managing skill is better than none.</p>",
+    },
+    {
+      title: "Test 2. The stars expect the job",
+      situation: "Your four strongest engineers expect to become leads, and a star who is passed over with nothing slows down by about 8%. Skills still barely transfer. Which plan handles the stars and the lead jobs best?",
+      baseline: { rule: 0, link: 0.1, passover: 0.08 },
+      options: [
+        { id: "A", label: "Promote the stars to lead", detail: "Highest output wins the job", params: { rule: 0, ladder: 0 } },
+        { id: "B", label: "Dual ladder, leads by management trial", detail: "Stars become principal engineers with the same pay and title; leads come from the rest", params: { rule: 2, ladder: 1 } },
+        { id: "C", label: "Dual ladder, but leads are the best of the rest", detail: "Stars get the technical title; leads are the next-strongest engineers", params: { rule: 0, ladder: 1 } },
+        { id: "D", label: "Management trial, no new title for the stars", detail: "Stars stay as they are and are told to be patient", params: { rule: 2, ladder: 0 } },
+      ],
+      rankBy: "lost", better: "lower",
+      learning: "<p><b>Fix both halves: a dual ladder for the stars and a real test for the leads.</b> Output lost to weak leadership: promote the stars <b>3.2</b> (about €29k a month; the top 4 deliver only 1.7 of 5.7 because they stop coding), dual ladder with trial <b>1.0</b> (about <b>3.2×</b> better, €9k a month, top 4 deliver the full 5.7), trial with no title <b>1.5</b> (about 2.1×; the stars' slump costs about 0.35), dual ladder with the best of the rest <b>2.6</b> (only about 1.2×: the title saves the stars' output but the leads are still picked on the wrong skill).</p><p><b>Rule of thumb:</b> the dual ladder pays for itself when you would otherwise lose a star's output or goodwill; it only works if the technical title carries real pay and status. Promotion is also how firms motivate people (Benson et al.), so give the stars a prize that is not a management job.</p>",
+    },
+    {
+      title: "Test 3. When the best engineer is the right lead",
+      situation: "Now you create <b>tech-lead</b> roles: the lead codes 70% of the time, and what makes a good one is mostly technical judgement. Engineering skill almost fully predicts it. You have just learned to run a management trial. Which rule gives the highest output?",
+      baseline: { rule: 2, link: 0.9, role: 1, ladder: 0, passover: 0 },
+      options: [
+        { id: "A", label: "Keep using the management trial", detail: "Your new default", params: { rule: 2 } },
+        { id: "B", label: "Draw four names at random", detail: "Ignore performance", params: { rule: 1 } },
+        { id: "C", label: "Promote the four best engineers", detail: "Highest output wins the job", params: { rule: 0 } },
+      ],
+      rankBy: "output", better: "higher", size: false,
+      question: "Your call: which rule gives the highest company output?",
+      learning: "<p><b>Here the common-sense rule is right.</b> Company output out of 20: best engineers <b>20.1</b>, management trial <b>19.6</b>, random <b>18.8</b>. When the new job is mostly the old job, skill carries over, so the strongest engineer is also the strongest lead (+12.6% on each report, against +7.0% for the trial). The gap is small, about half an engineer, because the trial still finds good people.</p><p><b>Rule of thumb:</b> the Peter principle bites in proportion to how different the new job is. Promote on current performance when the role is mostly the same craft; test the new skill when the role is mostly something else. Always ask what the new job really demands.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>The Peter principle is about transfer:</b> if skill in the new job is unrelated to skill in the old one, promoting the best performer lowers output. Simulation (Pluchino et al., 2010) and sales data (Benson, Li &amp; Shue, 2019) agree on the direction.",
+    "<b>Test the new job, not the old one:</b> a management trial beat both best-first and random when skills barely transfer (about 2.7× less output lost than promoting the best engineers).",
+    "<b>Promoting a star has a double cost:</b> you lose their output and gain a weak manager. A dual ladder keeps the output and the motivation; pair it with a real test for the leads.",
+    "<b>It reverses when the job is mostly the same craft:</b> for a tech lead who codes 70% of the time, promoting the best engineer wins.",
+  ],
+});
+</script>
+</body>
+</html>

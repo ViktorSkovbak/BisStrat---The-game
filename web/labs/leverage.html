@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Leverage Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- Illustrative model of managerial leverage (Grove): a founder's hours spread over five activities ---------- */
+// Output per person runs from 0.60 (no direction, no help) to 0.93 (fully covered). Coverage saturates: the first hours count most.
+const BASE = 0.6, A_PRI = 0.17, A_UNB = 0.16;
+const HIRE_HOURS = 35, HIRE_CAP = 6, RAMP = 0.28; // founder hours per hire, hires a year the market allows, share of a year a new hire is productive
+const PULL_HOURS = 7;   // founder hours a week for customers and investors to keep the team's work meeting demand
+const FOUNDER = 2.5;    // a founder's own hour counts as 2.5 ordinary hours (best engineer or seller)
+const sat = (c) => 1 - Math.exp(-c);
+
+function parts(p) {
+  const hours = p.ic + p.hire + p.pri + p.unb + p.ext;
+  const hires = HIRE_CAP * (1 - Math.exp((-50 * p.hire) / HIRE_HOURS / HIRE_CAP)); // hires over the next 12 months
+  const seat = p.n + 0.5 * hires;                          // people in seats on average
+  const cPri = p.pri / (4 + 0.35 * seat);                  // share of the direction and specs the team needs
+  const cUnb = p.unb / (0.8 * seat);                       // share of the 1:1 and unblocking time it needs
+  const q = BASE + A_PRI * sat(cPri) + A_UNB * sat(cUnb);  // output per person
+  const heads = p.n + RAMP * hires;                        // people actually productive, averaged over the year
+  const pull = 0.6 + 0.4 * sat(p.ext / PULL_HOURS);        // how much of the output meets a customer or investor
+  const own = (FOUNDER * p.ic) / 40;
+  const out = (heads * q + own) * pull;
+  const alone = p.n * BASE * 0.6;                          // the same team left alone, with no founder time
+  return { hours, hires, cPri, cUnb, q, pull, own, out, added: out - alone, alone };
+}
+
+function model(p) {
+  const r = parts(p);
+  const pp = (r.q / (BASE + A_PRI + A_UNB)) * 100;
+  const caption = `Your ${fmt(r.hours, 0)} hours add ${fmt(r.added)} person-weeks a week to a team of ${p.n}: each person works at ${Math.round(pp)}% of a fully supported person, and you cover ${Math.round(sat(r.cPri) * 100)}% of the direction and ${Math.round(sat(r.cUnb) * 100)}% of the help they need.${r.hours > 65 ? " More than 65 hours a week is not sustainable; the model does not charge you for it." : ""}`;
+  return { values: { added: r.added, out: r.out, hours: r.hours, pp, hires: r.hires, own: (r.own * r.pull / r.out) * 100 }, caption, parts: r };
+}
+
+/* ---------- The control room: a light for you, a light per person, beams for the leverage you give ---------- */
+function scene(k) {
+  const { THREE, box, cyl, sphere, mats, glow } = k;
+  const RING = 36, C = new THREE.Vector3(0, 1.4, -1.5);
+  box(3.4, 0.8, 2.2, mats.dark, 0, 0, -1.5);
+  cyl(0.15, 1.0, mats.steel, 0, 0.8, -1.5);
+  const me = sphere(0.8, glow(2.6), 0, 2.2, -1.5);
+  const cols = [mats.brass, mats.steel, mats.cool, mats.cool, mats.dark].map((m, i) => box(1.3, 1, 1.3, m, (i - 2) * 2.1, 0, 3.6));
+  const beamGeo = new THREE.BoxGeometry(1, 0.05, 0.05);
+  const people = Array.from({ length: RING }, () => {
+    const light = glow(0.2), beam = new THREE.MeshStandardMaterial({ color: 0x0b1620, emissive: 0x7fb3d6, emissiveIntensity: 0 });
+    const m = { desk: box(1.2, 0.6, 1, mats.steel), light: sphere(0.34, light, 0, 1.1, 0), lm: light, bm: beam, beam: new THREE.Mesh(beamGeo, beam) };
+    k.scene.add(m.beam);
+    return m;
+  });
+  let shown = 0, R = null;
+  function place(count) {
+    people.forEach((m, i) => {
+      const on = i < count;
+      m.desk.visible = m.light.visible = m.beam.visible = on;
+      if (!on) return;
+      const a = (i / count) * Math.PI * 2 + 0.3, x = Math.cos(a) * 13, z = Math.sin(a) * 8.2;
+      m.desk.position.set(x, 0.3, z); m.light.position.set(x, 1.1, z);
+      const dx = x - C.x, dz = z - C.z;
+      m.beam.position.set((x + C.x) / 2, 1.25, (z + C.z) / 2);
+      m.beam.rotation.y = -Math.atan2(dz, dx); m.beam.scale.x = Math.hypot(dx, dz);
+    });
+  }
+  k.onTick((dt, t) => {
+    if (!R) return;
+    const lit = 0.25 + 3 * Math.max(0, (R.q - BASE) / (A_PRI + A_UNB));
+    const reach = 0.1 + 1.6 * ((sat(R.cPri) + sat(R.cUnb)) / 2);
+    people.forEach((m, i) => { m.lm.emissiveIntensity = lit * (0.88 + 0.12 * Math.sin(t * 2 + i)); m.bm.emissiveIntensity = reach; });
+    me.material.emissiveIntensity = 2.4 + 0.4 * Math.sin(t * 2.5);
+  });
+  return {
+    update(p, result) {
+      R = result.parts;
+      const count = Math.min(RING, p.n + Math.round(R.hires));
+      if (count !== shown) { shown = count; place(count); }
+      [p.ic, p.hire, p.pri, p.unb, p.ext].forEach((h, i) => { const s = Math.max(0.12, h * 0.14); cols[i].scale.y = s; cols[i].position.y = s / 2; });
+      k.hud.innerHTML = `<span>You <b>${fmt(R.hours, 0)}</b> h</span><span>Columns: own work · hiring · priorities · 1:1s · investors and customers</span><span>People lit <b>${count}</b></span><span>Brightness = output per person</span>`;
+    },
+  };
+}
+
+const lab = createLab({
+  id: "L15",
+  area: "Management",
+  title: "Managerial leverage",
+  goal: "Decide <b>where a founder's hours go</b>: your own work, hiring, direction, 1:1s and unblocking, or investors and customers, and how that split must change as the team grows.",
+  story: "Spring 2027. Your hardware company has <b>12 people</b>: engineers, technicians and a salesperson. Two pilot customers wait, a grant milestone is due and a seed round is open. You work about <b>45 hours a week</b>, and <b>20 of them</b> are your own engineering and sales work. You never calculate here: you decide where your hours go and judge how much it matters.",
+  params: [
+    { key: "n", label: "People in the team", options: [{ value: 12, label: "12" }, { value: 20, label: "20" }, { value: 30, label: "30" }], value: 12 },
+    { key: "ic", label: "Your own engineering or sales work", min: 0, max: 40, step: 1, value: 20, format: (v) => `${v} h` },
+    { key: "hire", label: "Hiring (sourcing, interviews, closing)", min: 0, max: 25, step: 1, value: 3, format: (v) => `${v} h` },
+    { key: "pri", label: "Priorities and clear specs", min: 0, max: 30, step: 1, value: 4, format: (v) => `${v} h` },
+    { key: "unb", label: "1:1s, unblocking and coaching", min: 0, max: 35, step: 1, value: 5, format: (v) => `${v} h` },
+    { key: "ext", label: "Investors and customers", min: 0, max: 30, step: 1, value: 13, format: (v) => `${v} h` },
+  ],
+  metrics: [
+    { key: "added", label: "Output your week adds", unit: "person-weeks/wk" },
+    { key: "out", label: "Useful output, whole company", unit: "person-weeks/wk" },
+    { key: "pp", label: "Output per person", unit: "% of fully supported", format: (v) => v.toFixed(0) },
+    { key: "hours", label: "Hours you work", unit: "h/wk", format: (v) => v.toFixed(0) },
+    { key: "hires", label: "Hires in 12 months", unit: "people", format: (v) => v.toFixed(1) },
+    { key: "own", label: "Output from your own hands", unit: "%", format: (v) => v.toFixed(0) },
+  ],
+  model,
+  chart: {
+    title: "What your week adds, as you move hours from your own work to direction and 1:1s",
+    xLabel: "hours on priorities, specs, 1:1s and unblocking", yLabel: "output your week adds (person-weeks/wk)",
+    xMin: 0, xMax: 40,
+    xFormat: (v) => `${Math.round(v)} h`,
+    series(p) {
+      const pool = p.ic + p.pri + p.unb, share = p.pri + p.unb > 0 ? p.pri / (p.pri + p.unb) : 0.5;
+      const total = [], hands = [];
+      for (let x = 0; x <= Math.min(40, pool); x += 0.5) {
+        const r = parts({ ...p, ic: pool - x, pri: x * share, unb: x * (1 - share) });
+        total.push([x, r.added]); hands.push([x, r.own * r.pull]);
+      }
+      return [
+        { name: "Output your week adds", color: "brass", points: total },
+        { name: "of which your own hands", color: "dim", dashed: true, points: hands },
+      ];
+    },
+    marker: (p, r) => [p.pri + p.unb, r.values.added],
+    note: "Illustrative model: people work at 60-93% of a fully supported person depending on how much direction and 1:1 time they get, with diminishing returns; your own hour counts as 2.5 ordinary hours; hiring, investors and customers have their own payoffs. Calibrated so that going from thin to decent direction and 1:1 time lifts output per person by about 12%, the size Bloom et al. (2013) found for better management practices (17%). It is a teaching model, not a forecast.",
+  },
+  stage: { floor: [34, 22], view: 21 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. Ten more hours",
+      situation: "A part-time adviser takes over admin and your week can grow from 45 to <b>55 hours</b>. Today: 20 h on your own work, 3 h hiring, 4 h priorities and specs, 5 h on 1:1s and unblocking, 13 h with investors and customers. Where do the <b>10 extra hours</b> go?",
+      baseline: {},
+      options: [
+        { id: "A", label: "More of your own engineering", detail: "+10 h own work (30 h in all)", params: { ic: 30 } },
+        { id: "B", label: "More hiring", detail: "+10 h hiring (13 h in all)", params: { hire: 13 } },
+        { id: "C", label: "Priorities, specs and unblocking", detail: "+5 h priorities and specs, +5 h 1:1s and unblocking", params: { pri: 9, unb: 10 } },
+        { id: "D", label: "More investors and customers", detail: "+10 h external (23 h in all)", params: { ext: 23 } },
+      ],
+      rankBy: "added", better: "higher", size: false,
+      question: "Your call: where do the extra 10 hours add the most?",
+      learning: "<p><b>Direction and unblocking win.</b> Five hours on priorities and specs plus five on 1:1s and unblocking raise what your week adds by about 18% (1.18×; about 10% more useful output for the whole company), because every person gets clearer work and fewer stalls. The instinct, more of your own engineering, adds about 11% (6% on the company): it adds one pair of hands, even if yours are worth 2.5 ordinary pairs. Investors and customers add about 9% (5%): today's 13 hours already cover most of the pull. More hiring adds about 8% (4%) in the first year, because new people take months to ramp and need your time too; it pays more in year two.</p><p><b>The rule:</b> spend the next hour where it changes the output of the most people, until that activity is well covered. Then the next hour goes to the next best thing.</p>",
+    },
+    {
+      title: "Test 2. The team grows to 30",
+      situation: "Twelve months later you have <b>30 people</b> and still work 55 hours: 15 h own work, 6 h hiring, 9 h priorities and specs, 10 h 1:1s and unblocking, 15 h external. The same split that was fine at 12 now covers far less of what each person needs. What do you change?",
+      baseline: { n: 30, ic: 15, hire: 6, pri: 9, unb: 10, ext: 15 },
+      options: [
+        { id: "A", label: "Keep the split that got you here", detail: "It worked at 12 people", params: {} },
+        { id: "B", label: "Stop your own work; put it into direction and 1:1s", detail: "0 h own work, 16 h priorities, 18 h 1:1s and unblocking", params: { ic: 0, pri: 16, unb: 18 } },
+        { id: "C", label: "Stop your own work; hire faster", detail: "0 h own work, 21 h hiring", params: { ic: 0, hire: 21 } },
+        { id: "D", label: "Stop your own work; double the external time", detail: "0 h own work, 30 h investors and customers", params: { ic: 0, ext: 30 } },
+      ],
+      rankBy: "added", better: "higher", size: false,
+      question: "Your call: what is the best change for a team of 30?",
+      learning: "<p><b>Move your own hours into direction and 1:1s.</b> Keeping the old split lowers output per person from 86% to 78% of a fully supported person (about 9% less), because the same hours now stretch over more people: 1:1 coverage falls from about 58% to 32% of what people need, direction from about 63% to 44%. Option B restores output per person to 85% and raises what your week adds by about 8.5% (about 4% more useful output). Hiring faster is the worst move: hires in the year rise from 4.6 to 6, but your time is diluted again and what your week adds falls about 6%. Doubling external time gains almost nothing (about 0.4%), because customers and investors were already well covered at 15 hours.</p><p><b>The rule:</b> the hours a team needs grow with its size, but yours do not. As the team grows, your own work shrinks towards zero and direction and 1:1s grow first. Beyond about 8 direct reports you need leads you have trained (Grove's guide is a half-day a week per report).</p>",
+    },
+    {
+      title: "Test 3. Only 40 hours",
+      situation: "A family matter caps you at <b>40 hours</b> for the next quarter. The 12-person team is used to your 55-hour split: 15 h own work, 6 h hiring, 9 h priorities and specs, 10 h 1:1s and unblocking, 15 h external. You must cut <b>15 hours</b>. Pick the cut.",
+      baseline: { n: 12, ic: 15, hire: 6, pri: 9, unb: 10, ext: 15 },
+      options: [
+        { id: "A", label: "Stop your own engineering and sales work", detail: "15 h own work becomes 0", params: { ic: 0 } },
+        { id: "B", label: "Drop 1:1s and unblocking, trim own work", detail: "0 h 1:1s, 10 h own work", params: { unb: 0, ic: 10 } },
+        { id: "C", label: "Drop investor and customer meetings", detail: "2 h external, 13 h own work", params: { ext: 2, ic: 13 } },
+        { id: "D", label: "Cut every activity by the same share", detail: "11 / 4 / 7 / 7 / 11 hours", params: { ic: 11, hire: 4, pri: 7, unb: 7, ext: 11 } },
+      ],
+      rankBy: "added", better: "higher", size: false,
+      question: "Your call: which cut costs the least?",
+      learning: "<p><b>Cut your own work first.</b> Stopping it costs what your week adds about 13% (about 8% of useful output). The popular alternatives are worse: cutting every activity by the same share costs about 18% (11% of useful output); dropping 1:1s and unblocking costs about 22% (13%), because that is the help that keeps 12 people moving; dropping investor and customer meetings costs about 45% (27%), because the team's output then meets no demand and no cash.</p><p><b>The rule:</b> when time shrinks, cut the activity that changes the fewest people's output, usually your own work, and protect what multiplies others and what brings demand in. It holds here because your own hands are only about 8% of the output; in a very small team they would matter more.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>A manager's output is the team's output</b> (Grove). Judge an hour by what it adds to everyone else's work, not by what you produce yourself.",
+    "<b>Spend the next hour where it changes the most people's output</b>: priorities, clear specs, 1:1s, unblocking, hiring and training. Returns diminish, so once a lever is covered, move to the next.",
+    "<b>The same split covers less as the team grows.</b> At 30 people a 12-person split lowers output per person by about 9%; shift your own work into direction and 1:1s and build leads.",
+    "<b>When hours are short, cut your own work first</b>, never the things that multiply others or bring demand in. Cutting every activity equally is the common mistake.",
+  ],
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>ROIC Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model: the value-driver formula, one line at a time ----------
+   value of a line = profit × (1 − growth ÷ return on capital) ÷ (cost of capital − growth)
+   Money in €M. Each line starts with €100M of capital. The spare cash is €10M, one time. */
+const CASH = 10, IC0 = 100;
+
+const worth = (capital, roic, g, wacc) => (roic * capital) * (1 - g / roic) / (wacc - g);
+
+function model(p) {
+  const w = p.wacc / 100, rA = p.roicA / 100, rB = p.roicB / 100;
+  const gA = Math.min(p.gA / 100, w - 0.01), gB = Math.min(p.gB / 100, w - 0.01); // formula needs growth below the cost of capital
+  let a = p.toA, b = p.toB;
+  const tot = a + b;
+  if (tot > CASH) { a = (a * CASH) / tot; b = (b * CASH) / tot; } // only €10M exists
+  const payout = CASH - a - b;
+  const icA = IC0 + a, icB = IC0 + b;
+  const vA = worth(icA, rA, gA, w), vB = worth(icB, rB, gB, w);
+  const co = vA + vB;
+  const xA = vA / icA, xB = vB / icB;
+  const spread = rB - w;
+  const verdict = Math.abs(spread) < 1e-9 ? "B earns what its capital costs, so growing it changes nothing."
+    : spread < 0 ? "B earns less than its capital costs, so the faster it grows, the less it is worth."
+    : "B earns more than its capital costs, so growth adds value.";
+  const caption = `Line A earns ${p.roicA}% on capital that costs ${p.wacc}%: each euro in it is worth €${xA.toFixed(2)}. Line B earns ${p.roicB}%: each euro in it is worth €${xB.toFixed(2)}. ${verdict}`;
+  return { values: { vA, vB, co, owners: co + payout, net: co - icA - icB, xA, xB, icA, icB, payout }, caption };
+}
+
+/* ---------- The floor: two lines feed a vault ----------
+   Lit machines = capital in the line. Coin speed = growth. Coins and lights turn red when a line is worth less than its capital.
+   The vault glows with value per euro of capital and its gold stack grows with value to owners. */
+function scene(k) {
+  const { box, cyl, sphere, mats, glow } = k;
+  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+  const X0 = -17, XE = 6.5, LEN = XE - X0, PATH = LEN + 5 + 3.5; // path: along the line, across to the middle, into the vault
+  box(LEN + 1, 0.3, 1.2, mats.belt, (X0 + XE) / 2, 0, -5);
+  box(LEN + 1, 0.3, 1.2, mats.belt, (X0 + XE) / 2, 0, 5);
+  box(1.2, 0.3, 11.2, mats.belt, XE, 0, 0);
+  box(4.5, 0.3, 1.2, mats.belt, XE + 2.5, 0, 0);
+  const lines = [-5, 5].map((z) => {
+    const side = Math.sign(z) * 2.2;
+    const lights = [];
+    for (let i = 0; i < 8; i++) {
+      const x = X0 + 1 + i * 2.6;
+      box(1.6, 1.2, 1.6, mats.steel, x, 0, z + side);
+      lights.push(sphere(0.3, glow(0.2), x, 1.8, z + side));
+    }
+    const coins = Array.from({ length: 10 }, (_, i) => ({ d: (i * PATH) / 10, mesh: sphere(0.3, mats.brass, X0, 0.6, z) }));
+    return { z, lights, coins, g: 0.03, n: 5, bad: false };
+  });
+  box(6, 5, 8, mats.dark, 14, 0, 0);
+  cyl(0.5, 5, mats.steel, 11.2, 0, -4.4); cyl(0.5, 5, mats.steel, 11.2, 0, 4.4);
+  const vaultMat = glow(1);
+  box(0.2, 3, 5, vaultMat, 10.9, 1, 0);
+  const halo = sphere(1.1, vaultMat, 14, 11.8, 0);
+  const stack = box(2.6, 1, 2.6, mats.brass, 14, 5, 0);
+  k.onTick((dt) => {
+    for (const L of lines) {
+      const speed = 2.5 + L.g * 60;
+      L.coins.forEach((c, i) => {
+        c.d = (c.d + speed * dt) % PATH;
+        c.mesh.visible = i < Math.round((L.n / 8) * 10);
+        c.mesh.material = L.bad ? mats.jam : mats.brass;
+        const d = c.d;
+        if (d < LEN) c.mesh.position.set(X0 + d, 0.6, L.z);
+        else if (d < LEN + 5) c.mesh.position.set(XE, 0.6, L.z * (1 - (d - LEN) / 5));
+        else c.mesh.position.set(XE + (d - LEN - 5), 0.6, 0);
+      });
+    }
+  });
+  return {
+    update(p, r) {
+      const v = r.values;
+      [[v.icA, p.gA, v.xA], [v.icB, p.gB, v.xB]].forEach(([ic, g, x], i) => {
+        const L = lines[i];
+        L.n = clamp(Math.round(ic / 20), 2, 8); L.g = g / 100; L.bad = x < 1;
+        L.lights.forEach((s, j) => {
+          s.material.emissive.setHex(L.bad ? 0xe5573f : 0xffb547);
+          s.material.emissiveIntensity = j < L.n ? 2.6 : 0.15;
+        });
+      });
+      const shine = clamp((v.owners / (v.icA + v.icB + CASH) - 1.2) / 1.0, 0, 1);
+      vaultMat.emissiveIntensity = 0.1 + 3 * shine;
+      const s = Math.max(0.2, v.owners / 80);
+      stack.scale.y = s; stack.position.y = 5 + 0.5 * s;
+      halo.position.y = 5 + s + 1.1;
+      k.hud.innerHTML = `<span>Line A <b>${v.xA.toFixed(2)}×</b> its capital</span><span>Line B <b>${v.xB.toFixed(2)}×</b> its capital</span><span>Worth to owners <b>€${v.owners.toFixed(0)}M</b></span>`;
+    },
+  };
+}
+
+const m1 = (v) => (Number.isFinite(v) ? v.toFixed(1) : "–");
+
+const lab = createLab({
+  id: "L10",
+  area: "Capital allocation & corporate finance",
+  title: "Growth only pays above the cost of capital",
+  goal: "Decide <b>where the next euro goes</b>: into the fast line, into the high-return line, or back to the owners. Know when growth adds value, when it destroys it and when it does not matter.",
+  story: "It is 2031. Your company has two product lines, each with about <b>€100M</b> of capital tied up in machines, tooling and stock. <b>Line A</b> (the established module) earns <b>€25M</b> a year after tax and grows <b>2%</b> a year. <b>Line B</b> (the new platform) earns <b>€8M</b> and grows <b>4%</b>, twice as fast. Investors and lenders together expect <b>10%</b> a year on any capital you hold. You also have <b>€10M</b> of spare cash. You decide; you never calculate.",
+  params: [
+    { key: "roicA", label: "Line A: yearly profit per €100 of capital", min: 5, max: 35, step: 1, value: 25, format: (v) => `€${v}`, hint: "Return on invested capital (ROIC) of line A" },
+    { key: "roicB", label: "Line B: yearly profit per €100 of capital", min: 4, max: 25, step: 1, value: 8, format: (v) => `€${v}`, hint: "Return on invested capital (ROIC) of line B" },
+    { key: "wacc", label: "What investors expect per €100 a year", min: 9, max: 14, step: 0.5, value: 10, format: (v) => `€${fmt(v, 1)}`, hint: "Cost of capital (WACC)" },
+    { key: "gA", label: "Line A growth a year", min: 0, max: 8, step: 0.5, value: 2, format: (v) => `${fmt(v, 1)}%` },
+    { key: "gB", label: "Line B growth a year", min: 0, max: 8, step: 0.5, value: 4, format: (v) => `${fmt(v, 1)}%` },
+    { key: "toA", label: "Spare cash put into line A", min: 0, max: 10, step: 2.5, value: 0, format: (v) => `€${fmt(v, 1)}M`, hint: "Whatever is not invested (of €10M) is paid out to owners" },
+    { key: "toB", label: "Spare cash put into line B", min: 0, max: 10, step: 2.5, value: 0, format: (v) => `€${fmt(v, 1)}M` },
+  ],
+  metrics: [
+    { key: "vA", label: "Line A is worth", unit: "€M", format: m1 },
+    { key: "vB", label: "Line B is worth", unit: "€M", format: m1 },
+    { key: "co", label: "Company is worth", unit: "€M", format: m1 },
+    { key: "owners", label: "Worth to owners (company + cash paid out)", unit: "€M", format: m1 },
+    { key: "net", label: "Value above the capital in it", unit: "€M", format: m1 },
+  ],
+  model,
+  chart: {
+    title: "What a line is worth per euro of capital, by growth",
+    xLabel: "growth a year (%)", yLabel: "worth per €1 of capital (€)",
+    xMin: 0, xMax: 8, yMin: 0, yMax: 5,
+    xFormat: (v) => `${v}%`, yFormat: (v) => `€${v}`,
+    series(p) {
+      const w = p.wacc / 100, pts = (roic) => {
+        const out = [];
+        for (let g = 0; g <= 8.001; g += 0.25) out.push([g, worth(1, roic / 100, Math.min(g / 100, w - 0.01), w)]);
+        return out;
+      };
+      return [
+        { name: `A's return (${p.roicA}%)`, color: "brass", points: pts(p.roicA) },
+        { name: `Return = cost of capital (${fmt(p.wacc, 1)}%): growth adds nothing`, color: "dim", dashed: true, points: pts(p.wacc) },
+        { name: `B's return (${p.roicB}%)`, color: "jam", points: pts(p.roicB) },
+      ];
+    },
+    marker: (p, r) => [p.gB, r.values.xB],
+    note: "Illustrative model: each line is valued with the value-driver formula, one steady return on capital and one steady growth rate forever, with new money earning the line's average return. It is not calibrated to a real company; the shape (up above the dashed line, down below it) is what the formula and McKinsey's valuation work show. Real returns fall as a line saturates.",
+  },
+  stage: { floor: [40, 22], view: 24 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. The next €10M",
+      situation: "Both lines run as above. You have <b>€10M</b> of spare cash and three ideas: feed the fast new line, expand the high-return line, or pay it out. (Assume line A can use the money at its usual return, and any money invested keeps growing with its line.)",
+      question: "Your call: where does the €10M create the most value for the owners?",
+      baseline: {},
+      options: [
+        { id: "A", label: "Put it into line B, the fast grower", detail: "Biggest growth story for the next investor deck", params: { toB: 10 } },
+        { id: "B", label: "Put it into line A, the high-return line", detail: "Slow growth, but €25 of profit per €100", params: { toA: 10 } },
+        { id: "C", label: "Pay it out to the owners", detail: "No growth, the cash goes home", params: {} },
+        { id: "D", label: "Split it: €5M into each line", detail: "A bit of everything", params: { toA: 5, toB: 5 } },
+      ],
+      rankBy: "owners", better: "higher", size: false,
+      learning: "<p><b>Line A wins; the fast line is the worst use of the money, worse than paying it out.</b> Each euro in A becomes about €2.88 of value, so the €10M adds about €28.8M and the owners end at €382.9M against €364.2M today (+€18.8M, +5%). The same €10M in B becomes only about €6.7M of value (each euro is worth about €0.67), so the owners end at €360.8M, €3.3M below simply paying it out (€364.2M). The 50/50 split lands in between at €371.9M (+€7.7M).</p><p><b>Rule of thumb:</b> rank uses of cash by the gap between the return and the cost of capital, not by growth. If nothing beats the cost of capital, give the money back. <b>Catch:</b> the model lets A take the money at 25%; in real life the extra euros earn less as A saturates, and A stops beating the payout only when the return on the new money falls to 10%.</p>",
+    },
+    {
+      title: "Test 2. Fix the return or push the growth?",
+      situation: "Line B earns 8% on capital that costs 10% and grows 4% a year. It is worth about €66.7M, less than the €100M tied up in it. Your head of product wants to double its growth. Your head of operations thinks price, yield and tooling reuse could raise its return. Which move is worth most?",
+      baseline: {},
+      options: [
+        { id: "A", label: "Double B's growth", detail: "From 4% to 8% a year: the board's favourite", params: { gB: 8 } },
+        { id: "B", label: "Halve B's growth", detail: "From 4% to 2% a year, spend less on expansion", params: { gB: 2 } },
+        { id: "C", label: "Lift B's return to 14%", detail: "Operational work; growth stays at 4%", params: { roicB: 14 } },
+        { id: "D", label: "Lift B's return to 9%", detail: "A modest improvement; growth stays at 4%", params: { roicB: 9 } },
+      ],
+      rankBy: "vB", better: "higher",
+      question: "Your call: which move makes line B worth most?",
+      learning: "<p><b>Lift the return (C), not the growth.</b> Taking B from 8% to 14% lifts it from €66.7M to €166.7M (2.5×) without selling one extra unit. A smaller lift to 9% already gives €83.3M (1.25×). Halving the growth to 2% raises the value to €75.0M (1.1×): below its cost of capital, a line is worth <i>more</i> when it grows slower. Doubling the growth to 8% takes the line to <b>€0</b> (0×): it would pour all of its €8M of profit back into itself every year and nothing would ever come out.</p><p><b>Rule of thumb:</b> below the cost of capital, work on the return before the growth; every extra point of growth costs value. Above it, the order reverses. <b>Catch:</b> the model holds the return fixed. In hardware, costs often fall with volume, so a line below the hurdle today can be rational if the return really climbs with scale; make that claim with evidence, not hope.</p>",
+    },
+    {
+      title: "Test 3. When growth stops mattering",
+      situation: "A cost-down programme has lifted line B to a <b>10% return</b>: exactly what the capital costs. It grows 4% a year and is worth €100M, the same as the capital in it. The board asks what plan creates the most value for B from here.",
+      baseline: { roicB: 10 },
+      options: [
+        { id: "A", label: "Double the growth to 8%", detail: "Same 10% return on the extra capital", params: { gB: 8 } },
+        { id: "B", label: "Stop growing and pay the cash out", detail: "Growth 0%", params: { gB: 0 } },
+        { id: "C", label: "Lift the return to 12%, keep 4% growth", detail: "Operational work only", params: { roicB: 12 } },
+        { id: "D", label: "Lift the return to 12% and double growth to 8%", detail: "Fix the spread, then grow", params: { roicB: 12, gB: 8 } },
+      ],
+      rankBy: "vB", better: "higher",
+      question: "Your call: which plan makes line B worth most?",
+      learning: "<p><b>At a 10% return growth is worth exactly nothing:</b> doubling it (A) and stopping it (B) both leave B at €100.0M, the same as today (1.0×) and the same as the capital in it. Lifting the return to 12% alone (C) gives €133.3M (1.33×). Lifting it to 12% <i>and</i> doubling growth (D) gives <b>€200.0M (2.0×)</b>: growth multiplies the gap between return and cost of capital, and at a gap of zero it multiplies nothing.</p><p><b>Rule of thumb:</b> the value growth adds is roughly the gap between return and cost of capital times the capital you add. Make the gap positive first, then grow. <b>Catch:</b> this is also the case where the board's story and the owners' value part ways: growth that adds nothing still costs management time and risk.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Growth creates value only when the return on capital beats the cost of capital.</b> Above it, growth adds value; equal, it adds nothing; below it, it destroys value. A line earning 8% on 10% money that doubles its growth goes from €67M to nothing.",
+    "<b>Give the next euro to the biggest gap, not the fastest growth.</b> €10M in the 25% line is worth about €28.8M; in the 8% line about €6.7M; paid out it is worth €10M. If nothing beats the cost of capital, return the cash.",
+    "<b>Fix the return before you grow.</b> Lifting a sub-hurdle line from 8% to 14% is worth 2.5×; doubling its growth is worth zero. Growth multiplies the spread, so first make the spread positive.",
+    "<b>Capital allocation is the CEO's core job.</b> Every use of cash (invest, acquire, repay debt, buy back, pay out) faces the same hurdle. Teledyne's Henry Singleton bought back about 90% of his shares in 12 years when that beat the alternatives.",
+  ],
+});
+</script>
+</body>
+</html>

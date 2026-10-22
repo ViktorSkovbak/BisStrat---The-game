@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Power-Law Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model: a seeded Monte Carlo of seed funds with a fat-tailed (truncated Pareto) payoff ---------- */
+const SIGMA = 0.9;   // how widely a company's exit value varies around its median if it works (log scale)
+const CAP = 300;     // the best investment returns at most 300x its cost
+const TOTAL = 10000; // simulated investments per evaluation (funds = 10,000 / deals per fund)
+const SHARE_X = [0, 1, 2, 3, 4, 5, 6, 8, 10, 15, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+
+function rng(seed) { return function () { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+const R = rng(20271), U1 = new Float64Array(TOTAL), U2 = new Float64Array(TOTAL);
+for (let i = 0; i < TOTAL; i++) { U1[i] = R(); U2[i] = R(); } // fixed draws: every option is compared on the same luck
+
+// Money multiple of one investment, after later rounds dilute us.
+function multiple(bets, loss, alpha, u, w) {
+  if (bets === 1) return u < 0.75 ? 3 : 0;       // a likely 3x
+  if (bets === 2) return u < 0.1 ? 50 : 0;       // 10% chance of 100x at entry value (about 50x after dilution)
+  if (bets === 3) return u < 0.9 ? 1.3 : 0;      // a steady, profitable business
+  if (u < loss) { return w < 0.65 ? 0 : 0.1 + 0.8 * (w - 0.65) / 0.35; } // lost money: 0 or 0.1-0.9x
+  const v = w; // winners: truncated Pareto from 1x to 300x
+  return Math.pow(1 - v * (1 - Math.pow(CAP, -alpha)), -1 / alpha);
+}
+
+const cache = new Map();
+function simulate(p) {
+  const key = `${p.bets}|${p.deals}|${p.loss}|${p.tail}`;
+  if (cache.has(key)) return cache.get(key);
+  const d = p.deals, F = Math.floor(TOTAL / d), loss = p.loss / 100;
+  const all = new Float64Array(F * d), funds = new Array(F);
+  for (let f = 0; f < F; f++) {
+    let sum = 0, best = 0, lost = 0;
+    for (let j = 0; j < d; j++) { const m = multiple(p.bets, loss, p.tail, U1[f * d + j], U2[f * d + j]); all[f * d + j] = m; sum += m; if (m > best) best = m; if (m < 1) lost++; }
+    funds[f] = { f, mult: sum / d, top: sum ? best / sum : 0, lost };
+  }
+  const byMult = funds.slice().sort((a, b) => a.mult - b.mult), med = byMult[Math.floor(F / 2)];
+  const want = p.bets === 0 ? loss * d : med.lost; // show a typical fund: median result, with a typical number of losers
+  const mid = funds.slice().sort((a, b) => Math.abs(a.mult - med.mult) - Math.abs(b.mult - med.mult)).find((x) => Math.abs(x.lost - want) <= 1) || med;
+  const topShare = funds.map((x) => x.top).sort((a, b) => a - b)[Math.floor(F / 2)];
+  const sample = Array.from(all.slice(mid.f * d, mid.f * d + d));
+  const sorted = Float64Array.from(all).sort(); // ascending
+  const N = sorted.length; let total = 0; for (let i = 0; i < N; i++) total += sorted[i];
+  const curve = []; let run = 0, idx = N - 1;
+  for (const x of SHARE_X) { const need = Math.ceil(N * x / 100); while (N - 1 - idx < need) { run += sorted[idx]; idx--; } curve.push([x, total ? 100 * run / total : 0]); }
+  const out = { mid: med.mult, topShare, sample, curve, key, pReturn: funds.filter((x) => x.mult >= 1).length / F, pBig: funds.filter((x) => x.mult >= 3).length / F };
+  cache.set(key, out);
+  return out;
+}
+
+function erf(x) { const s = Math.sign(x); x = Math.abs(x); const t = 1 / (1 + 0.3275911 * x);
+  return s * (1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x)); }
+const Phi = (z) => 0.5 * (1 + erf(z / Math.SQRT2));
+
+function model(p) {
+  const sim = simulate(p);
+  const ownExit = (p.own / 100) * (p.ret / 100);
+  const bar = p.fundSize / ownExit; // exit value that returns the whole fund
+  const oneCompany = (p.exitCase * ownExit) / p.fundSize;
+  const pHit = p.pSuccess * (1 - Phi(Math.log(bar / p.exitCase) / SIGMA)); // percent
+  const lost = sim.sample.filter((m) => m < 1).length, best = Math.max(...sim.sample);
+  const caption = `In a typical simulated fund of ${p.deals} bets, ${lost} lose money, the best one brings ${Math.round(sim.topShare * 100)}% of all proceeds, and the fund returns ${sim.mid.toFixed(1)}× its money. At ${(ownExit * 100).toFixed(1)}% ownership at exit, one company must be sold for about €${Math.round(bar).toLocaleString("en-US")}M to return the fund.`;
+  return { values: { fundMult: sim.mid, topShare: sim.topShare * 100, bar, oneCompany, pHit }, caption, sim, lost, best };
+}
+
+/* ---------- The vault: each orb is one investment; dark means money lost, blazing means a fund-maker ---------- */
+function scene(k) {
+  const { THREE, box, cyl, sphere, mats, glow, remove } = k;
+  const lv = [mats.dark, glow(0.5), glow(1.3), glow(2.6), glow(6)]; // lost, 1-3x, 3-10x, 10-30x, 30x+
+  const lamp = new THREE.MeshStandardMaterial({ color: 0x2a1a05, emissive: 0xffb547, emissiveIntensity: 0.2 });
+  const bar = new THREE.MeshStandardMaterial({ color: 0x0b1620, emissive: 0x7fb3d6, emissiveIntensity: 0.4 });
+  box(7, 5, 1.6, mats.dark, -12, 0, -9); box(4.6, 3.6, 0.3, mats.steel, -12, 0.7, -8.1); sphere(0.45, lamp, -12, 5.5, -9);
+  // three towers: the fund (fixed), what the typical fund brings back, and your company's success case
+  const fundT = cyl(1, 1, mats.steel, -13, 0, -3), proceedsT = box(2, 1, 2, mats.brass, -13, 0, 0), oneT = box(2, 1, 2, bar, -13, 0, 3);
+  const setH = (m, h) => { m.scale.y = Math.max(0.05, h); m.position.y = m.scale.y / 2; };
+  setH(fundT, 4);
+  const lights = Array.from({ length: 50 }, (_, i) => sphere(0.15, mats.dark, -5 + i * 0.4, 0.3, -8.5));
+  let parts = [], key = "";
+  function build(sample) {
+    parts.forEach(remove); parts = [];
+    sample.forEach((m, i) => {
+      const x = 3 + ((i % 13) - 6) * 1.6, z = -2 + Math.floor(i / 13) * 2.4, level = m < 1 ? 0 : m < 3 ? 1 : m < 10 ? 2 : m < 30 ? 3 : 4;
+      const r = 0.28 + 0.14 * Math.log10(1 + m);
+      parts.push(box(1.1, 0.3, 1.1, mats.steel, x, 0, z), sphere(r, lv[level], x, 0.4 + r, z));
+      if (level >= 3) parts.push(cyl(0.07, 1.5 + 2.2 * Math.log10(m), lv[level], x, 0.4 + 2 * r, z));
+    });
+  }
+  k.onTick((dt, t) => { lv[4].emissiveIntensity = 5 + 1.5 * Math.sin(t * 3); });
+  return {
+    update(p, r) {
+      if (r.sim.key !== key) { key = r.sim.key; build(r.sim.sample); }
+      const v = r.values, lit = Math.round(v.pHit / 2); // 50 copies of the company: how many return the fund
+      setH(proceedsT, 4 * Math.min(v.fundMult, 3.5)); setH(oneT, 4 * Math.min(v.oneCompany, 3));
+      lamp.emissiveIntensity = 0.2 + 2.5 * Math.min(1, v.fundMult / 3);
+      bar.emissiveIntensity = v.oneCompany >= 1 ? 3 : 0.4;
+      lights.forEach((l, i) => { l.material = i < lit ? lv[3] : mats.dark; });
+      k.hud.innerHTML = `<span>Bets <b>${p.deals}</b></span><span>Lost money <b>${r.lost}</b></span><span>Best bet <b>${r.best >= 10 ? r.best.toFixed(0) : r.best.toFixed(1)}×</b></span><span>Fund returns <b>${v.fundMult.toFixed(1)}×</b></span><span>Of 50 copies of your company, <b>${lit}</b> return the fund</span>`;
+    },
+  };
+}
+
+const eur = (v) => `€${Math.round(v).toLocaleString("en-US")}M`;
+
+const lab = createLab({
+  id: "L04",
+  area: "Venture finance",
+  title: "Power-law returns",
+  goal: "Judge whether a company can <b>return a venture fund</b>: which kind of bet a fund wants, how big an exit it needs, and what you must show to be fundable.",
+  story: "It is 2027 and you are raising for a venture-scale hardware company. A <b>€60M seed fund</b> makes about <b>25 investments</b>, roughly <b>€2.4M each</b> including follow-ons. It buys about <b>12%</b> at entry; later rounds dilute that to about <b>6%</b> by exit. The partner asks one question: <b>could your company return the whole fund?</b> You will make three calls the partner makes every week.",
+  params: [
+    { key: "bets", label: "What the fund backs", options: [{ value: 0, label: "Typical seed mix" }, { value: 1, label: "Likely 3×" }, { value: 2, label: "10% chance of 100×" }, { value: 3, label: "Steady profitable" }], value: 0, hint: "Typical mix: calibrated to the evidence on this page. The other three fill every slot with one kind of company." },
+    { key: "fundSize", label: "Fund size", min: 30, max: 200, step: 5, value: 60, format: (v) => eur(v) },
+    { key: "deals", label: "Investments in the fund", min: 10, max: 50, step: 1, value: 25, format: (v) => String(v) },
+    { key: "own", label: "Share the fund buys at entry", min: 5, max: 25, step: 1, value: 12, format: (v) => `${v}%` },
+    { key: "ret", label: "Share kept after later rounds", min: 30, max: 100, step: 5, value: 50, format: (v) => `${v}%` },
+    { key: "loss", label: "Investments that lose money", min: 40, max: 70, step: 1, value: 55, format: (v) => `${v}%`, hint: "Evidence: about half to two thirds" },
+    { key: "tail", label: "How far winners run", options: [{ value: 2, label: "Modest" }, { value: 1.4, label: "Strong" }, { value: 1, label: "Typical venture" }, { value: 0.8, label: "Extreme" }], value: 1, hint: "Tail steepness of the winners (Pareto exponent)" },
+    { key: "pSuccess", label: "Chance your company works", min: 2, max: 60, step: 1, value: 15, format: (v) => `${v}%` },
+    { key: "exitCase", label: "Exit value if it works", min: 100, max: 4000, step: 50, value: 400, format: (v) => eur(v), hint: "A typical (median) success case; real outcomes vary widely around it" },
+  ],
+  metrics: [
+    { key: "fundMult", label: "Typical fund result", unit: "× money back", format: (v) => v.toFixed(1) },
+    { key: "topShare", label: "Best bet's share of proceeds", unit: "%", format: (v) => String(Math.round(v)) },
+    { key: "bar", label: "Exit needed to return the fund", unit: "", format: (v) => eur(v) },
+    { key: "oneCompany", label: "Your success case", unit: "× the fund", format: (v) => v.toFixed(2) },
+    { key: "pHit", label: "Chance your company returns the fund", unit: "%", format: (v) => v.toFixed(1) },
+  ],
+  model,
+  chart: {
+    title: "Where a fund's money comes from",
+    xLabel: "best investments (% of all investments)", yLabel: "share of all proceeds (%)",
+    xMin: 0, xMax: 100, yMin: 0, yMax: 100,
+    xFormat: (v) => `${Math.round(v)}%`, yFormat: (v) => `${Math.round(v)}%`,
+    series: (p, r) => [
+      { name: "simulated: best-first cumulative share of proceeds", color: "brass", points: r.sim.curve },
+      { name: "if every investment paid the same", color: "dim", dashed: true, points: [[0, 0], [100, 100]] },
+      { name: "Horsley Bridge data: top 6% brought 60%", color: "glow", dots: true, points: [[6, 60]] },
+    ],
+    note: "Illustrative model: 10,000 simulated seed investments with a fat-tailed (Pareto) payoff, set so that about 55% lose money and the roughly 4-5% that return 10× or more bring about 60% of the money. The dot is real data: about 7,000 investments from 1985 to 2014 in funds backed by Horsley Bridge, as reported by Benedict Evans. Not a forecast.",
+  },
+  stage: { floor: [34, 22], view: 21 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. Which company does the fund want?",
+      situation: "The fund has so far backed steady, profitable businesses and is asking what to fill the next 25 slots with. Each kind of company below is a fair bet. Which kind gives the fund the best typical result? <b>Today:</b> steady profitable businesses, where 9 in 10 return 1.3× the money over the fund's life.",
+      baseline: { bets: 3 },
+      options: [
+        { id: "A", label: "A likely 3×", detail: "75% chance of 3× the money, 25% chance of losing it all", params: { bets: 1 } },
+        { id: "B", label: "A 10% chance of a 100×", detail: "100× the entry value, about 50× for the fund after later rounds; otherwise the money is lost", params: { bets: 2 } },
+        { id: "C", label: "Another steady business", detail: "90% chance of 1.3× the money, 10% chance of losing it all", params: { bets: 3 } },
+      ],
+      rankBy: "fundMult", better: "higher",
+      question: "Your call: which kind of company gives the fund the best typical result?",
+      learning: "<p><b>The long shot wins, and the safe business is the worst choice.</b> Filled with 25 moonshots, the typical fund returns about <b>4.0×</b> its money, about 3.5× better than today's steady businesses. Filled with likely-3× companies it returns about 2.3× (2.0× better). Steady profitable businesses return about 1.1×, which is less than a fund needs after fees and years of waiting.</p><p>The reason is the arithmetic of one bet: chance × size of the win. The moonshot is 10% × 50× = 5.0× per bet, the likely 3× is 75% × 3× = 2.3×, and the steady business 90% × 1.3× = 1.2×. The moonshot has a catch: with 25 shots, roughly 1 fund in 13 gets no hit at all.</p><p><b>The rule:</b> a fund is paid for the size of its wins, not for how often it wins. Judge a bet by what its win would be worth to the whole fund. Real data has the same shape: about half of ~7,000 investments lost money, while the 6% that returned 10× or more produced about 60% of all returns.</p>",
+    },
+    {
+      title: "Test 2. How big an exit is big enough?",
+      situation: "Your plan today says a <b>€400M</b> sale. The partner says that is not a fund-returner and asks what exit would be. The fund is €60M. It buys 12% at entry and keeps about half of that through the later rounds.",
+      baseline: { exitCase: 400 },
+      options: [
+        { id: "A", label: "About €250M", detail: "A good outcome for a pilot-stage hardware company", params: { exitCase: 250 } },
+        { id: "B", label: "About €600M", detail: "A strong sale to an industrial buyer", params: { exitCase: 600 } },
+        { id: "C", label: "About €1.2B", detail: "A category leader", params: { exitCase: 1200 } },
+        { id: "D", label: "About €3B", detail: "A very large outcome", params: { exitCase: 3000 } },
+      ],
+      rankBy: "oneCompany", better: "higher", size: false,
+      question: "Your call: the smallest exit that returns the whole €60M fund?",
+      best: (rows) => rows.filter((r) => r.v >= 1).sort((a, b) => a.p.exitCase - b.p.exitCase)[0].id,
+      learning: "<p><b>The bar is about €1 billion, not a few hundred million.</b> The fund owns about 6% at exit (12% × 50% kept), so it needs €60M ÷ 6% = <b>€1,000M</b>. The options return 0.25× the fund at €250M, 0.6× at €600M, <b>1.2× at €1.2B</b> and 3.0× at €3B. Only €1.2B and €3B return the fund, and €1.2B is the smallest option that does.</p><p>Founders count a €250M exit as a triumph, and for them it is. For this fund it repays a quarter of its money, and there are 24 other slots to fill.</p><p><b>The rule:</b> exit needed = fund size ÷ (ownership at entry × share kept after later rounds). It grows with the fund: a €200M fund needs about €3.3B at the same terms. Check this number against your plan before you take a venture cheque.</p>",
+    },
+    {
+      title: "Test 3. What must you show to be fundable?",
+      situation: "Your company has a <b>15% chance of working</b>, and if it works the typical sale is <b>€400M</b>, well under the roughly €1B this fund needs. You have four months and money for one piece of proof. Which one makes the partner most likely to see a fund-returner?",
+      baseline: { pSuccess: 15, exitCase: 400, own: 12 },
+      options: [
+        { id: "A", label: "Lower the risk", detail: "Signed pilot customers lift your chance of working from 15% to 25%", params: { pSuccess: 25 } },
+        { id: "B", label: "Bigger market evidence", detail: "Customer data shows a typical success case of €800M, not €400M", params: { exitCase: 800 } },
+        { id: "C", label: "A cheaper round", detail: "The fund buys 15% for the same money instead of 12%", params: { own: 15 } },
+        { id: "D", label: "A smaller, faster plan", detail: "Aim for a quick €250M trade sale; chance of working rises to 30%", params: { pSuccess: 30, exitCase: 250 } },
+      ],
+      rankBy: "pHit", better: "higher",
+      question: "Your call: which proof most raises the chance your company returns the fund?",
+      learning: "<p><b>Show a bigger win, not a safer one.</b> The chance that your company returns the whole fund is about 2.3% today. Bigger market evidence lifts it to about <b>6.0%</b> (2.6×). Lower risk lifts it to 3.9% (1.7×), a cheaper round to 3.3% (1.4×), and the smaller, faster plan <i>lowers</i> it to 1.9% (0.8×), because a likely small win cannot repay the fund however likely it is.</p><p>Why: the chance of returning the fund is the chance of working × the chance the win is above the bar. Risk work only multiplies the first part, here by 25 ÷ 15 = 1.7×. Evidence for a bigger market moves the whole outcome toward the bar, where small shifts in size change the odds a lot. The cheaper round also helps the fund, but you pay with ownership you may need later.</p><p><b>The rule:</b> first show that the success case clears the fund's bar; only then does reducing risk pay. With 25 bets at about 2% to 6% each, a fund expects roughly one fund-returner, so the partner needs every bet to have a credible path.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Returns follow a power law:</b> in the Horsley Bridge data about half of ~7,000 investments lost money, while the 6% that returned 10× or more produced about 60% of the money. A fund is paid for its few big wins.",
+    "<b>Each bet needs a path to returning the fund:</b> exit needed = fund size ÷ (ownership at entry × share kept after later rounds). For a €60M fund at 12% entry and half kept, that is about €1B; a €300M exit is a good outcome but not a fund-returner.",
+    "<b>The safe business is the wrong bet for a venture fund:</b> chance × size of win decides. A 10% chance of a fund-making win beats a likely small win, as long as there are enough shots.",
+    "<b>To be fundable, show the size of the win first:</b> evidence that the success case clears the bar moves the odds more than lower risk or a cheaper round.",
+  ],
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Pricing Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model: profit = (price - variable cost) x units - fixed cost ---------- */
+// Illustrative demand: the share of prospects who buy falls slowly while the price is far below
+// the customer's saving, then fast. Half of them walk at HALF_AT. Today (EUR 2,000) about 92% buy.
+const TODAY = 2000, HALF_AT = 3000, STEEP = 6;
+const buyShare = (price) => 1 / (1 + Math.pow(price / HALF_AT, STEEP));
+const eur = (v) => (v < 0 ? "−" : "") + "€" + Math.round(Math.abs(v)).toLocaleString("en-US");
+const eurK = (v) => (v < 0 ? "−" : "") + "€" + Math.round(Math.abs(v)).toLocaleString("en-US") + "k";
+const TODAY_PROFIT = 100; // k EUR: (2,000 - 1,200) x 1,000 units - 700k
+
+function units(p) { return (p.demand * buyShare(p.price)) / buyShare(TODAY) + p.extra; }
+
+function model(p) {
+  const n = units(p), margin = p.price - p.varcost;
+  const profit = (margin * n) / 1000 - p.fixed; // k EUR
+  const needed = margin > 0 ? ((p.fixed + TODAY_PROFIT) * 1000) / margin : Infinity;
+  const pct = p.price > 0 ? Math.round((margin / p.price) * 100) : 0;
+  const caption = `At ${eur(p.price)} about ${Math.round(n).toLocaleString("en-US")} units sell. Each earns ${eur(margin)} (${pct}%) after ${eur(p.varcost)} of cost; after ${eurK(p.fixed)} of fixed costs, profit is ${eurK(profit)} a year.`;
+  return { values: { profit, units: n, buy: buyShare(p.price) * 100, margin, needed }, caption };
+}
+
+/* ---------- The press: a stamped unit per stroke, a column that splits price into cost and margin ---------- */
+function scene(k) {
+  const { THREE, box, cyl, mats, glow, remove, onTick } = k;
+  box(26, 0.3, 1.8, mats.belt, 0, 0, 0);
+  [-1.5, 1.5].forEach((z) => box(0.7, 4.8, 0.7, mats.dark, 0, 0, z));
+  box(1.2, 0.8, 4, mats.dark, 0, 4.8, 0);
+  const head = box(1.6, 0.9, 2.2, mats.brass, 0, 0, 0);
+  const crateGeo = new THREE.BoxGeometry(0.8, 0.5, 0.8);
+  let crates = [], acc = 0, phase = 0, rate = 1, P = null, stack = [], stackN = -1;
+
+  // Price column: blue = what a unit costs you, amber = what you keep.
+  const costBar = cyl(0.8, 1, mats.cool, -6, 0, 4.5), keepBar = cyl(0.8, 1, glow(2.4), -6, 0, 4.5);
+  // Profit gauge: a glowing bar in a frame; the thin line marks today's profit.
+  box(0.25, 8, 1.4, mats.dark, 4.8, 0, -6);
+  const okMat = glow(2.4), bar = cyl(0.5, 1, okMat, 4, 0, -6);
+  box(1.8, 0.07, 1.8, mats.steel, 4, 0.2 + 7 * (TODAY_PROFIT / 500), -6);
+
+  onTick((dt) => {
+    if (!P) return;
+    phase += dt * rate * Math.PI * 2;
+    head.position.y = 3.9 - 2.2 * (0.5 - 0.5 * Math.cos(phase));
+    acc += dt * rate;
+    if (acc >= 1) {
+      acc = 0;
+      const m = new THREE.Mesh(crateGeo, mats.steel); m.castShadow = true; m.position.set(-12, 0.55, 0); k.scene.add(m); crates.push(m);
+    }
+    crates = crates.filter((m) => {
+      m.position.x += dt * 4;
+      if (m.position.x > 0.4 && m.material === mats.steel) m.material = mats.brass; // stamped
+      if (m.position.x > 12.5) { remove(m); return false; }
+      return true;
+    });
+  });
+
+  return {
+    update(p, r) {
+      P = p;
+      rate = Math.min(2.2, Math.max(0.2, r.values.units / 900));
+      const cost = p.varcost / 400, keep = Math.max(0, p.price - p.varcost) / 400;
+      costBar.scale.y = cost; costBar.position.y = cost / 2;
+      keepBar.scale.y = Math.max(0.001, keep); keepBar.position.y = cost + keep / 2;
+      const h = 0.2 + 7 * Math.min(1, Math.max(0, r.values.profit / 500));
+      bar.scale.y = h; bar.position.y = h / 2;
+      bar.material = r.values.profit > 0 ? okMat : mats.jam;
+      const n = Math.min(60, Math.round(r.values.units / 25));
+      if (n !== stackN) { // the stack of units sold: one block is about 25 units
+        stack.forEach(remove); stack = []; stackN = n;
+        for (let i = 0; i < n; i++) stack.push(box(0.8, 0.5, 0.8, mats.brass, 8 + (i % 5) * 0.9, Math.floor(i / 20) * 0.52, 3.5 + (Math.floor(i / 5) % 4) * 0.9));
+      }
+      k.hud.innerHTML = `<span>Price <b>${eur(p.price)}</b></span><span>Units sold <b>${Math.round(r.values.units).toLocaleString("en-US")}</b></span><span>Profit <b>${eurK(r.values.profit)}</b></span>`;
+    },
+  };
+}
+
+createLab({
+  id: "L09",
+  area: "Pricing",
+  title: "The price lever",
+  goal: "Decide <b>where profit comes from</b>: which lever moves it most, what a discount really costs, and how to set a price from what the customer gains.",
+  story: "It is 2027 and your industrial product is in its first year. You sell it for <b>€2,000</b>; it costs <b>€1,200</b> to build and ship, and about <b>1,000 units</b> a year sell. Fixed costs (engineers, lab, certification) are <b>€700k</b>, so profit is a thin <b>€100k</b>. A typical customer saves roughly <b>€5,000</b> in its first year with it. Investors will ask you about margins, and pilot customers will ask you for discounts.",
+  params: [
+    { key: "price", label: "Price per unit", min: 1200, max: 4500, step: 50, value: 2000, format: eur },
+    { key: "varcost", label: "Cost per unit (build, ship)", min: 900, max: 1400, step: 20, value: 1200, format: eur },
+    { key: "demand", label: "Demand at today's €2,000 price", min: 600, max: 1600, step: 50, value: 1000, format: (v) => `${v} units`, hint: "How many units the market would take a year at €2,000" },
+    { key: "fixed", label: "Fixed costs a year", min: 450, max: 900, step: 10, value: 700, format: (v) => `€${v}k` },
+    { key: "extra", label: "Units a big customer commits to", min: 0, max: 600, step: 50, value: 0, format: (v) => `${v} units`, hint: "Extra units on top of normal demand, sold at the same price" },
+  ],
+  metrics: [
+    { key: "profit", label: "Profit a year", format: (v) => eurK(v) },
+    { key: "units", label: "Units sold", unit: "a year", format: (v) => Math.round(v).toLocaleString("en-US") },
+    { key: "buy", label: "Prospects who buy", unit: "%", format: (v) => v.toFixed(0) },
+    { key: "margin", label: "You keep per unit", format: (v) => eur(v) },
+    { key: "needed", label: "Units to match today's profit", format: (v) => (Number.isFinite(v) ? Math.round(v).toLocaleString("en-US") : "–") },
+  ],
+  model,
+  chart: {
+    title: "Profit at every price",
+    xLabel: "price per unit (€)", yLabel: "profit a year (€k)",
+    xMin: 1300, xMax: 4500, yMin: -300, yMax: 500,
+    xFormat: (v) => `€${Math.round(v).toLocaleString("en-US")}`,
+    series(p, r) {
+      const real = [], still = [];
+      for (let x = 1300; x <= 4500; x += 50) {
+        real.push([x, model({ ...p, price: x }).values.profit]);
+        const alt = ((x - p.varcost) * r.values.units) / 1000 - p.fixed; // nobody walks away
+        if (alt <= 500) still.push([x, alt]);
+      }
+      return [
+        { name: "profit as customers walk away", color: "brass", points: real },
+        { name: "if nobody walked away", color: "dim", dashed: true, points: still },
+      ];
+    },
+    marker: (p, r) => [p.price, r.values.profit],
+    note: "Illustrative model: about 92% of prospects buy at €2,000 and half walk away at €3,000; the curve is a stylised shape, not measured data. The McKinsey result (1% price = 11% profit) holds only while the dashed line is the right one. Real demand curves must be tested with customers.",
+  },
+  stage: { floor: [30, 18], view: 21 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. Which 5% matters most?",
+      situation: "Investors ask where the next €50k of profit comes from. You can improve exactly <b>one</b> thing by 5% this year, and each takes about the same effort. Profit today is <b>€100k</b>.",
+      baseline: {},
+      options: [
+        { id: "A", label: "Sell 5% more units", detail: "About 1,050 units a year at the same price", params: { demand: 1050 } },
+        { id: "B", label: "Raise the price 5%", detail: "€2,100; a few prospects will walk away", params: { price: 2100 } },
+        { id: "C", label: "Cut the cost per unit 5%", detail: "€1,140 instead of €1,200", params: { varcost: 1140 } },
+        { id: "D", label: "Cut fixed costs 5%", detail: "€665k instead of €700k", params: { fixed: 665 } },
+      ],
+      rankBy: "profit", better: "higher",
+      learning: "<p><b>Price wins; the instinct (more volume) comes third.</b> Profit today is €100k. A 5% price rise gives about <b>€176k (1.8×)</b>, even though about 3% of the units are lost. Cutting unit cost 5% gives €160k (1.6×), 5% more volume €140k (1.4×), cutting fixed costs 5% €135k (1.35×).</p><p><b>Why:</b> an extra euro of price drops straight into profit. An extra unit only brings its margin (€800 of €2,000, 40%). If no prospects walked away, the price rise would give €200k (2×). This is the pattern in the McKinsey study of about 2,400 companies (Marn &amp; Rosiello, 1992): 1% on price lifted operating profit about 11%, against about 8% for variable cost, 3% for volume and 2% for fixed cost.</p><p><b>Rule of thumb:</b> a price rise pays as long as you lose fewer units than rise ÷ (margin + rise). Here 5 ÷ (40 + 5) = about 11%. Volume loss is the thing to test, not assume.</p>",
+    },
+    {
+      title: "Test 2. The big customer wants 15% off",
+      situation: "A large manufacturer will take extra units if you cut the price. Assume the lower price reaches every customer sooner or later, so it applies to all your units. At a 40% margin, <b>15% off needs about 60% more units</b> (1,600) just to earn what you earn today. Profit today is <b>€100k</b>.",
+      baseline: {},
+      options: [
+        { id: "A", label: "Accept: 15% off for about 400 more units a year", detail: "Price €1,700; volume rises about 45%", params: { price: 1700, extra: 400 } },
+        { id: "B", label: "Counter: 8% off for about 300 more units", detail: "Price €1,840", params: { price: 1840, extra: 300 } },
+        { id: "C", label: "Say no and stay at €2,000", detail: "The big customer buys nothing", params: {} },
+        { id: "D", label: "Keep €2,000, add a service plan for about 250 more units", detail: "The plan costs you about €60 a unit", params: { varcost: 1260, extra: 250 } },
+      ],
+      rankBy: "profit", better: "higher",
+      question: "Your call: which deal leaves you with the most profit?",
+      learning: "<p><b>Accepting the order is the worst of the four, and below doing nothing.</b> The break-even rule: units needed = discount ÷ (margin − discount). At a 40% margin a 10% discount needs about 33% more units, 15% needs 60%. The big customer offers about 45% more, so profit falls from €100k to about <b>€27k (0.3×)</b>.</p><p>Countering with 8% off needs about 25% more units and gets about 33%: profit about <b>€153k (1.5×)</b>. Saying no keeps €100k. The best deal holds the price and buys the volume with something specific that costs you little (here a service plan at €60 a unit): about <b>€225k (2.25×)</b>.</p><p><b>Rule of thumb:</b> never trade price for volume without the break-even number. Trade something specific for something specific: a longer contract, a volume commitment, a reference. That the customer would take the service plan for 250 extra units is an assumption in this test, not a given in real life.</p>",
+    },
+    {
+      title: "Test 3. How to set the price",
+      situation: "You must set the list price. Your full cost is about <b>€1,900</b> a unit (€1,200 plus €700k spread over 1,000 units). A rival's simpler product sells at <b>€1,800</b> and saves customers far less. Your product saves a typical customer about <b>€5,000</b> in the first year. Profit today at €2,000 is <b>€100k</b>.",
+      baseline: {},
+      options: [
+        { id: "A", label: "Cost-plus: full cost plus 15%", detail: "€2,185", params: { price: 2185 } },
+        { id: "B", label: "Match the rival", detail: "€1,800", params: { price: 1800 } },
+        { id: "C", label: "Take about half of the customer's saving", detail: "€2,500", params: { price: 2500 } },
+        { id: "D", label: "Take 80% of the customer's saving", detail: "€4,000", params: { price: 4000 } },
+      ],
+      rankBy: "profit", better: "higher",
+      question: "Your call: which price method earns the most profit?",
+      learning: "<p><b>Price from the customer's gain, but do not take it all.</b> Half of the saving (€2,500) gives about <b>€359k (3.6×)</b>, with about 75% of prospects still buying (815 units). Cost-plus (€2,185) gives about €232k (2.3×): fine, but it ignores how much your product is worth. Matching the rival (€1,800) <b>loses about €76k</b>: you copy a price for a weaker product and your margin is too thin to cover fixed costs. Taking 80% of the saving (€4,000) loses about €240k: only about 15% of prospects buy (164 units).</p><p><b>Rule of thumb:</b> the customer's economic value is what their best alternative costs plus what your product adds; the price sits between your cost (the floor) and that value (the ceiling) and must leave the customer a clear gain. In this stylised model the best price is about €2,600; in real life, find it by testing with customers.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Price is the strongest profit lever.</b> In McKinsey's study of about 2,400 companies, 1% on price (volume unchanged) lifted operating profit about 11%, against about 8% for variable cost, 3% for volume and 2% for fixed cost. For a thin-margin start-up the effect is even larger.",
+    "<b>A discount needs a lot of extra volume:</b> units needed = discount ÷ (margin − discount). With a 40% margin, 10% off needs about 33% more units and 15% off needs 60%. Compute it before you say yes.",
+    "<b>Trade something specific for something specific</b> (commitment, term, service you have costed), not price for hoped-for volume.",
+    "<b>Price from the customer's value, not your cost or a rival's price.</b> Cost-plus and matching leave money (or lose it); taking nearly all the gain collapses adoption. The best price is between your cost and the customer's gain, and you find it by testing.",
+  ],
+});
+</script>
+</body>
+</html>

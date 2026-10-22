@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Bass Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model: the Bass curve in closed form, ten years, plus a factory capacity plan ---------- */
+const YEARS = 10;
+
+// Share of all potential buyers who have bought by year t. Reference customers at launch are a head start:
+// the curve is shifted left by the time the market would have needed to reach that share on its own.
+function makeF(p) {
+  const s = p.p + p.q, r = p.q / p.p;
+  const f0 = Math.min(0.99, p.seeds / p.m);
+  const t0 = f0 > 0 ? -Math.log((1 - f0) / (1 + r * f0)) / s : 0;
+  return { t0, s, r, F: (t) => { const e = Math.exp(-s * (t + t0)); return (1 - e) / (1 + r * e); } };
+}
+const capAt = (p, y) => p.cap + p.add * (y >= 4) + p.add * (y >= 6); // modules arrive at the start of year 4 and year 6
+
+function model(p) {
+  const { t0, s, r, F } = makeF(p);
+  const sales = [];
+  for (let y = 1; y <= YEARS; y++) sales.push(p.m * (F(y) - F(y - 1)));
+  let peak = 0, peakYear = 1;
+  sales.forEach((v, i) => { if (v > peak) { peak = v; peakYear = i + 1; } });
+  const half = F(0) >= 0.5 ? 0 : Math.max(0, -Math.log(0.5 / (1 + 0.5 * r)) / s - t0);
+  let served = 0, total = 0, util = 0, capyears = 0;
+  sales.forEach((v, i) => {
+    const c = capAt(p, i + 1);
+    served += Math.min(v, c); total += v; capyears += c;
+    util = Math.max(util, Math.min(v, c) / c);
+  });
+  const cust3 = p.m * F(3), cust5 = p.m * F(5);
+  const caption = `Half the market has bought by year ${fmt(half, 1)}. Sales peak at about ${Math.round(peak)} customers a year in year ${peakYear}, ${fmt(peak / sales[0], 1)}× the first year. ` +
+    `Factory: busiest year ${Math.round(util * 100)}% loaded, ${Math.round((100 * served) / total)}% of demand served.`;
+  return {
+    values: { cust3, cust5, sales5: sales[4], half, peak, peakYear, served: (100 * served) / total, util: util * 100, capyears },
+    caption,
+  };
+}
+
+/* ---------- The field: every light is a company that could buy; they switch on as the product spreads ---------- */
+function scene(k) {
+  const { THREE, box, cyl, sphere, mats, glow } = k;
+  const COLS = 24, ROWS = 12, N = COLS * ROWS, SP = 1.05, X0 = -3.5;
+  const cells = [];
+  for (let i = 0; i < N; i++) {
+    const c = i % COLS, r = Math.floor(i / COLS);
+    const x = X0 + (c - (COLS - 1) / 2) * SP, z = (r - (ROWS - 1) / 2) * SP;
+    box(0.62, 0.2, 0.62, mats.dark, x, 0, z);
+    const bulb = sphere(0.21, glow(0.12), x, 0.42, z);
+    cells.push({ c, r, bulb, rank: 0 });
+  }
+  // The factory on the right: its light shows how loaded the line is.
+  box(5, 2.2, 7, mats.steel, 14, 0, 0);
+  cyl(0.5, 3.4, mats.dark, 12.4, 0, -2.3);
+  const load = sphere(0.7, glow(0.2), 14, 2.9, 0);
+  box(8, 0.2, 1.6, mats.belt, 9.4, 0, 0);
+
+  let P = null, fn = null, order = [], orderKey = "", clock = 0;
+  const rng = (() => { let a = 7; return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
+
+  // Order in which companies buy: with probability p/(p+qF) a random one (marketing), otherwise one next to
+  // companies that already bought (word of mouth). High q therefore makes clusters; high p scatters lights.
+  function makeOrder(p) {
+    const done = new Array(N).fill(false), nb = new Array(N).fill(0), out = [];
+    for (let step = 0; step < N; step++) {
+      const f = step / N, pick = p.p / (p.p + p.q * f);
+      let idx = -1;
+      if (rng() >= pick) {
+        let sum = 0; const w = nb.map((n, i) => (done[i] ? 0 : n * n));
+        w.forEach((x) => (sum += x));
+        if (sum > 0) { let t = rng() * sum; idx = w.findIndex((x) => (t -= x) < 0); }
+      }
+      if (idx < 0) { const free = done.map((d, i) => (d ? -1 : i)).filter((i) => i >= 0); idx = free[Math.floor(rng() * free.length)]; }
+      done[idx] = true; out.push(idx);
+      const { c, r } = cells[idx];
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        const cc = c + dc, rr = r + dr;
+        if ((dc || dr) && cc >= 0 && cc < COLS && rr >= 0 && rr < ROWS) nb[rr * COLS + cc]++;
+      }
+    }
+    out.forEach((i, rank) => (cells[i].rank = rank));
+    return out;
+  }
+
+  k.onTick((dt) => {
+    if (!P) return;
+    clock += dt;
+    const T = Math.min(YEARS, clock / 1.1), hold = 2.5; // 1 year per 1.1 s, then hold
+    if (clock > YEARS * 1.1 + hold) clock = 0;
+    const F = fn.F(T), lit = Math.round(N * F), seedN = P.seeds > 0 ? Math.max(1, Math.round((N * P.seeds) / P.m)) : 0;
+    for (const c of cells) {
+      const on = c.rank < lit || c.rank < seedN;
+      const m = c.bulb.material;
+      m.emissive.setHex(c.rank < seedN ? 0x7fb3d6 : 0xffb547);
+      m.emissiveIntensity += ((on ? 2.6 : 0.1) - m.emissiveIntensity) * Math.min(1, dt * 8);
+    }
+    const rate = P.m * (P.p + P.q * F) * (1 - F), cap = capAt(P, Math.max(1, Math.ceil(T)));
+    const ld = rate / cap;
+    load.material.emissive.setHex(ld >= 0.95 ? 0xe5573f : ld >= 0.85 ? 0xffb547 : 0x6fcf8a);
+    load.material.emissiveIntensity = 0.3 + 2.5 * Math.min(1.1, ld);
+    k.hud.innerHTML = `<span>Year <b>${fmt(T, 1)}</b></span><span>Customers <b>${Math.round(P.m * F).toLocaleString("en-US")}</b> of ${P.m.toLocaleString("en-US")}</span><span>Selling <b>${Math.round(rate)}</b>/yr</span><span>Factory <b>${Math.round(ld * 100)}%</b> loaded</span>`;
+  });
+  return {
+    update(p) {
+      P = p; fn = makeF(p);
+      const key = `${p.p}|${p.q}`;
+      if (key !== orderKey) { orderKey = key; order = makeOrder(p); }
+      clock = 0;
+    },
+  };
+}
+
+const lab = createLab({
+  id: "L07",
+  area: "Growth strategy",
+  title: "Bass diffusion",
+  goal: "Decide <b>where to put growth money</b> (marketing or customer word of mouth), and <b>plan the factory for the sales peak</b>, not for the average.",
+  story: "It is 2027 and your first physical product is ready. About <b>3,000 companies</b> could buy it, and a sale takes months. Some hear about you through your own marketing; most will hear from a company that already bought. Each light in the field is one potential buyer. Watch the lights switch on, and what the curve does to your factory.",
+  params: [
+    { key: "m", label: "Potential buyers", min: 500, max: 10000, step: 100, value: 3000, format: (v) => v.toLocaleString("en-US") },
+    { key: "p", label: "Marketing reach", min: 0.005, max: 0.08, step: 0.001, value: 0.02, format: (v) => `${(v * 100).toFixed(1)}% a year`, hint: "Share of untouched buyers your own marketing converts each year (coefficient of innovation, p)" },
+    { key: "q", label: "Word of mouth", min: 0.1, max: 0.8, step: 0.01, value: 0.4, format: (v) => `${Math.round(v * 100)}% a year`, hint: "Share of untouched buyers who buy each year if every other buyer already had (coefficient of imitation, q)" },
+    { key: "seeds", label: "Reference customers at launch", min: 0, max: 300, step: 5, value: 0, format: (v) => String(v) },
+    { key: "cap", label: "Factory capacity at launch", min: 50, max: 600, step: 10, value: 400, format: (v) => `${v} units a year` },
+    { key: "add", label: "Capacity added in year 4 and again in year 6", min: 0, max: 200, step: 5, value: 0, format: (v) => `+${v} units a year, twice` },
+  ],
+  metrics: [
+    { key: "cust3", label: "Customers by year 3", unit: "customers", format: (v) => String(Math.round(v)) },
+    { key: "sales5", label: "Sales in year 5", unit: "per year", format: (v) => String(Math.round(v)) },
+    { key: "half", label: "Half the market bought by", unit: "years", format: (v) => fmt(v, 1) },
+    { key: "peak", label: "Peak-year sales", unit: "per year", format: (v, vals) => `${Math.round(v)} <small>(year ${vals.peakYear})</small>` },
+    { key: "served", label: "Demand the factory serves", unit: "%", format: (v) => v.toFixed(0) },
+    { key: "util", label: "Factory in its busiest year", unit: "% loaded", format: (v) => v.toFixed(0) },
+    { key: "capyears", label: "Capacity bought, 10 years", unit: "unit-years", format: (v) => Math.round(v).toLocaleString("en-US") },
+  ],
+  model,
+  chart: {
+    title: "New customers per year",
+    xLabel: "years after launch", yLabel: "new customers per year",
+    xMin: 0, xMax: YEARS,
+    xFormat: (v) => `Yr ${v}`,
+    series(p) {
+      const { F } = makeF(p), rate = [], inn = [], imi = [];
+      for (let t = 0; t <= YEARS + 1e-9; t += 0.25) {
+        const f = F(t);
+        inn.push([t, p.m * p.p * (1 - f)]); imi.push([t, p.m * p.q * f * (1 - f)]); rate.push([t, p.m * (p.p + p.q * f) * (1 - f)]);
+      }
+      const c1 = capAt(p, 1), c4 = capAt(p, 4), c6 = capAt(p, 6);
+      return [
+        { name: "all new customers", color: "brass", points: rate },
+        { name: "won by your marketing", color: "cool", points: inn },
+        { name: "won by word of mouth", color: "glow", points: imi },
+        { name: "factory capacity", color: "jam", dashed: true, points: [[0, c1], [3, c1], [3, c4], [5, c4], [5, c6], [YEARS, c6]] },
+      ];
+    },
+    marker(p) {
+      const { t0, s, r, F } = makeF(p);
+      const t = Math.min(YEARS, Math.max(0, Math.log(r) / s - t0)), f = F(t);
+      return [t, p.m * (p.p + p.q * f) * (1 - f)];
+    },
+    note: "Illustrative model: a standard Bass curve for a market of potential buyers, with a yearly factory plan on top. The starting values p = 0.02 and q = 0.40 sit inside the typical ranges reported from the Sultan, Farley &amp; Lehmann (1990) meta-analysis (p 0.01-0.03, q 0.3-0.5; averages 0.03 and 0.38), which mostly covers consumer products. The 40% effects, the €40k cost of a reference customer and the capacity plan in the tests are story assumptions, not measurements. The factory does not feed back into demand here; in real life a shortage pushes buyers to rivals.",
+  },
+  stage: { floor: [36, 18], view: 21 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. Marketing or word of mouth?",
+      situation: "Your product is out, sales are slow, and you have <b>€300k</b> for the next twelve months. Two ideas, each estimated to lift its lever by <b>40%</b>: <b>marketing</b> (trade shows, outbound sales, ads, so more companies hear of you) or <b>referenceable customers</b> (a few engineered pilots with published results plus an introduction programme, so buyers hear it from peers).",
+      question: "Your call: which choice gives the biggest sales in year 5?",
+      baseline: {},
+      options: [
+        { id: "A", label: "Spend it on marketing", detail: "40% more buyers reached each year", params: { p: 0.028 } },
+        { id: "B", label: "Build referenceable pilots and a referral programme", detail: "40% stronger word of mouth", params: { q: 0.56 } },
+        { id: "C", label: "Split it half and half", detail: "20% more on each lever", params: { p: 0.024, q: 0.48 } },
+      ],
+      rankBy: "sales5", better: "higher",
+      learning: "<p><b>Word of mouth wins by year 5, though marketing leads for the first three years.</b> Sales in year 5 are about 247 a year today. Marketing lifts that to about 300 (1.2×). Referenceable customers lift it to about 395 (<b>1.6×</b>). The half-and-half split gives about 347 (1.4×). Marketing is ahead after year 3 (438 customers against 418), then word of mouth overtakes in year 4 and reaches about 1,116 customers by year 5 against 987.</p><p><b>Why:</b> the same 40% is applied to two very different numbers. Your marketing converts about 2% of untouched buyers a year; each existing customer's pull is about 20 times stronger (0.40 against 0.02). Once roughly 5% of buyers have bought, word of mouth is already the bigger source, and by year 5 it brings most new customers. Marketing would need to be about 3.2× stronger to match the year-5 sales of the referral route.</p><p><b>Rule of thumb:</b> before the first customers exist, marketing and pilots do the job. As soon as customers exist and are happy, spend on making them talk. It only works if the product delivers: word of mouth multiplies whatever customers actually say.</p>",
+    },
+    {
+      title: "Test 2. Build the factory for the average or the peak?",
+      situation: "Your contract manufacturer needs a ten-year capacity plan, in units a year. Sales are expected to follow the curve in the chart. Remember the lesson of Lab L01: a line loaded above about 85% makes lead times blow up. You want the <b>cheapest plan</b> (fewest units of capacity bought over ten years) that <b>serves every customer</b> and <b>never runs above 85%</b> in any year.",
+      question: "Your call: the cheapest plan that serves everyone without passing 85% load?",
+      baseline: {},
+      options: [
+        { id: "A", label: "Size it for the average year", detail: "230 units a year from day one", params: { cap: 230, add: 0 } },
+        { id: "B", label: "Size it exactly for the peak", detail: "330 units a year from day one", params: { cap: 330, add: 0 } },
+        { id: "C", label: "Size it for the peak plus a fifth of slack", detail: "400 units a year from day one", params: { cap: 400, add: 0 } },
+        { id: "D", label: "Build in stages", detail: "190 units a year, plus 105 in year 4 and 105 more in year 6", params: { cap: 190, add: 105 } },
+      ],
+      rankBy: "capyears", better: "lower", size: false,
+      best: (rows) => rows.filter((r) => r.r.values.served >= 99.5 && r.r.values.util <= 85).sort((a, b) => a.v - b.v)[0].id,
+      learning: "<p><b>Stage it.</b> Expected sales run from about 73 in year 1 to a peak of about 328 in year 8 (average 227 over ten years). The peak is 1.4× the average and 4.5× the first year, and it arrives late, just before half the market has bought. <b>A</b> (230) loses about 377 customers, 17% of demand, and runs flat out from year 5. <b>B</b> (330) serves everyone but sits at 99% load in the peak year and above 85% for four years (6 to 9): by Kingman's law, delivery times there are long and unpredictable. <b>C</b> (400) is safe (82% in the busiest year) but buys 4,000 unit-years and averages only 57% load. <b>D</b> serves everyone, never passes 84%, and buys 3,160 unit-years: 21% less than C, with only 190 units of capacity committed at launch.</p><p><b>Rule of thumb:</b> the Bass curve tells you when the peak comes (about when 47% of the market has bought) and how high it is. Plan for the peak plus slack, but buy it in modules timed to the curve, and re-forecast at each module. Early sales are the cheapest data you have on p and q.</p>",
+    },
+    {
+      title: "Test 3. Launch with reference customers?",
+      situation: "Before launch you can place early units with <b>reference customers</b>: friendly companies that get a deep discount and engineering help, and agree to be named. Each costs about <b>€40k</b> (assumed). Your pilot budget is <b>€1.2M</b>. Investors expect these references to kick-start the curve. (Here they count only as customers who bought at launch.)",
+      question: "Your call: the plan with the most customers by year 3 inside the €1.2M budget?",
+      baseline: {},
+      options: [
+        { id: "A", label: "Launch cold", detail: "No references, €0", params: { seeds: 0 } },
+        { id: "B", label: "10 strong references", detail: "About €0.4M", params: { seeds: 10 } },
+        { id: "C", label: "30 references", detail: "About €1.2M", params: { seeds: 30 } },
+        { id: "D", label: "100 early units at a deep discount", detail: "About €4M: over budget", params: { seeds: 100 } },
+      ],
+      rankBy: "cust3", better: "higher",
+      best: (rows) => rows.filter((r) => r.p.seeds * 0.04 <= 1.2).sort((a, b) => b.v - a.v)[0].id,
+      learning: "<p><b>A handful of references is a head start of weeks, not a launch.</b> Customers by year 3 are about 322 today. Ten references give about 350 (1.1×) and move the curve earlier by about two months. Thirty give about 405 (<b>1.3×</b>, five months earlier). A hundred give about 584 (1.8×, 1.3 years earlier, with the sales peak moving from year 8 to year 6), but cost €4M, which is over budget. The best affordable plan is C.</p><p><b>Why so small:</b> the curve already brings about 60 buyers a year from marketing alone (3,000 × 2%), so each reference is worth only 5 to 6 days of that flow. Value per euro is about flat across sizes (€14-15k per extra customer by year 3), so the budget sets the size.</p><p><b>Rule of thumb:</b> a head start of N customers is worth about N ÷ (buyers × p) years. Do not expect a few logos to start the S-curve. The real reason to get strong references is that they make word of mouth stronger (Test 1), and this model does not count that.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Two engines, one curve:</b> your marketing reaches a small steady share of untouched buyers (p); existing customers pull in the rest in proportion to how many there are (q). New customers per year rise, peak when roughly half the market has bought, then fall.",
+    "<b>Once customers exist, word of mouth is the bigger lever.</b> In typical data q is roughly ten times p. The same +40% is worth about 1.6× in year-5 sales on q against 1.2× on p; marketing only leads in the first three years.",
+    "<b>Plan the factory for the peak, in stages.</b> The peak year is about 1.4× the ten-year average and 4.5× the first year. Sizing for the average loses customers; sizing exactly for the peak runs near 100% (Kingman); modules timed to the curve cost about a fifth less than building it all at once.",
+    "<b>A few reference customers are a small head start</b> (about 5 to 6 days each at this market size). Their real value is credibility, which acts on q.",
+  ],
+});
+</script>
+</body>
+</html>

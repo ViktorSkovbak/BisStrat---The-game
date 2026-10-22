@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Dilution Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- MODEL-START: a cap table through seed, Series A and Series B (EUR millions) ---------- */
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const SEED_POOL = 0.10, B_POOL = 0.12;        // option pool targets (share of the company) after seed and after Series B
+const POOL_NEED = 12;                          // pool (percent) the hiring plan needs after Series A
+const M1 = { cost: 3.0, buffer: 0.5 };         // seed milestone: the pilot works at a customer
+const M2 = { cost: 9.0, buffer: 2.0 };         // Series A milestone: a production-ready system proven on site
+const B_RAISE = 20, B_HIT = 100, B_MISS = 40;  // Series B: money wanted, and pre-money if the milestone is hit or missed
+const MISS_EXIT = 0.35;                        // exit value if the milestone is missed, as a share of the good case
+
+/** One priced round. The pool top-up sits inside the pre-money (usual term sheet) or after it (shared with the investor). */
+function priced(o, raise, pre, target, poolInPre, key) {
+  const i = raise / (pre + raise), n = { ...o };
+  if (poolInPre) {
+    const tgt = Math.max(target, o.pool * (1 - i)), s = (1 - i - tgt) / (1 - o.pool);
+    for (const k of ["f", "seed", "a", "b"]) n[k] = o[k] * s;
+    n.pool = tgt; n[key] += i;
+    return n;
+  }
+  for (const k of ["f", "seed", "a", "b", "pool"]) n[k] = o[k] * (1 - i);
+  const t = Math.max(0, (target - n.pool) / (1 - n.pool));
+  for (const k of ["f", "seed", "a", "b"]) n[k] *= 1 - t;
+  n.pool = n.pool * (1 - t) + t;
+  n[key] += i * (1 - t);
+  return n;
+}
+
+/** Series B with the pool in the pre-money; if it is a down round, the Series A investor gets weighted-average anti-dilution. */
+function seriesB(o, raise, pre, target, priceA) {
+  const i = raise / (pre + raise);
+  let x = 0, T = 1, t = 0, n = 0;
+  for (let it = 0; it < 40; it++) {
+    T = (1 + x - o.pool) / (1 - target - i); t = target * T - o.pool;
+    if (t < 0) { T = (1 + x) / (1 - i); t = 0; }
+    n = i * T;
+    x = raise / n < priceA ? Math.max(0, o.a * ((1 + n) / (1 + raise / priceA) - 1)) : 0;
+  }
+  return { f: o.f / T, seed: o.seed / T, a: (o.a + x) / T, b: n / T, pool: (o.pool + t) / T, down: raise / n < priceA };
+}
+
+function model(p) {
+  const money = p.seedRaise + p.grant;                              // everything in the bank before Series A
+  const seedPost = p.seedPre + p.seedRaise;
+  let o = priced({ f: 1, seed: 0, a: 0, b: 0, pool: 0 }, p.seedRaise, p.seedPre, SEED_POOL, true, "seed");
+  const gap = Math.max(0, M1.cost - money);                         // cash short of the pilot milestone: a bridge at a discount
+  if (gap > 0) o = priced(o, gap, 0.6 * seedPost, o.pool, true, "seed");
+  const strength = 0.7 + 0.3 * clamp((money - 2.5) / 1.0, 0, 1);   // a team with little runway negotiates from weakness
+  const preA = p.aPre * strength, postA = preA + p.aRaise;
+  const afterA = priced(o, p.aRaise, preA, p.pool / 100, p.poolPre === 1, "a");
+  const short = Math.max(0, POOL_NEED - afterA.pool * 100);         // a pool too small to hire with slows the build
+  const pHit = clamp(0.10 + 0.55 * clamp((p.aRaise - 5) / (M2.cost + M2.buffer - 5), 0, 1) - 0.03 * short, 0.05, 0.9);
+  const bRaise = Math.max(8, B_RAISE - Math.max(0, p.aRaise - (M2.cost + M2.buffer))); // spare cash shrinks the next round
+  const branch = (hit) => {
+    const pre = hit ? B_HIT : B_MISS;
+    return { c: seriesB(afterA, bRaise, pre, B_POOL, postA), pre, exit: hit ? p.exit : p.exit * MISS_EXIT };
+  };
+  const hit = branch(true), miss = branch(false);
+  const share = pHit * hit.c.f + (1 - pHit) * miss.c.f;
+  const euros = pHit * hit.c.f * hit.exit + (1 - pHit) * miss.c.f * miss.exit;
+  const shown = p.view === 1 ? hit : miss;
+  const raised = p.seedRaise + gap + p.aRaise + bRaise;
+  return {
+    values: { share: share * 100, euros, pHit: pHit * 100, afterA: afterA.f * 100, raised, grant: p.grant },
+    hit, miss, shown, o, afterA, postA, seedPost, pHit, bRaise, gap,
+    caption: `Founders keep ${(afterA.f * 100).toFixed(0)}% after the Series A and about ${(share * 100).toFixed(0)}% at exit, on average worth €${euros.toFixed(0)}M together. ` +
+      `${(pHit * 100).toFixed(0)}% chance the Series A milestone is reached` +
+      (postA > B_MISS ? `; if missed, the Series B is a down round (€${B_MISS}M pre-money against a €${postA.toFixed(0)}M post-money).` : "."),
+  };
+}
+/* ---------- MODEL-END ---------- */
+
+/* ---------- The pies: ownership at each stage, shrinking slice, growing pie ---------- */
+function scene(k) {
+  const { THREE, mats, glow, remove } = k;
+  let pies = [];
+  const blue = new THREE.MeshStandardMaterial({ color: 0x1b3550, emissive: 0x2f6fa3, emissiveIntensity: 0.45, metalness: 0.4, roughness: 0.5 });
+  const slice = (g, r, h, a0, a1, mat) => {
+    if (a1 - a0 < 0.002) return;
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 48, 1, false, a0, a1 - a0), mat);
+    m.position.y = 0.15 + h / 2; m.castShadow = m.receiveShadow = true; g.add(m);
+  };
+  k.onTick((dt) => pies.forEach((g) => { g.rotation.y += dt * 0.15; }));
+  return {
+    update(p, r) {
+      pies.forEach(remove); pies = [];
+      const c = r.shown.c;
+      const stages = [["Seed", r.seedPost, r.o], ["Series A", r.postA, r.afterA], ["Series B", r.shown.pre + r.bRaise, c], ["Exit", r.shown.exit, c]];
+      const radius = stages.map((s) => 0.22 * Math.sqrt(s[1]));
+      let u = -(radius.reduce((a, b) => a + 2 * b, 0) + 1.4 * 3) / 2;
+      stages.forEach(([, , o], i) => {
+        const R = radius[i], g = new THREE.Group(), cx = u + R;
+        u += 2 * R + 1.4;
+        g.position.set(cx / Math.SQRT2, 0, -cx / Math.SQRT2);
+        const f = o.f, inv = o.seed + o.a + o.b, h = 0.5 + 1.6 * f;
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(R + 0.25, R + 0.25, 0.15, 48), mats.dark);
+        base.position.y = 0.075; g.add(base);
+        slice(g, R, h, 0, 2 * Math.PI * f, glow(0.3 + 1.0 * f));
+        slice(g, R, 0.5, 2 * Math.PI * f, 2 * Math.PI * (f + inv), blue);
+        slice(g, R, 0.4, 2 * Math.PI * (f + inv), 2 * Math.PI, mats.brass);
+        for (const s of [-0.3, 0.3]) { // the two founders, as lights over their slice
+          const a = Math.PI * f + s * Math.min(1, f * 2);
+          const m = new THREE.Mesh(new THREE.SphereGeometry(0.22, 16, 10), glow(1.8));
+          m.position.set(0.6 * R * Math.sin(a), h + 0.5, 0.6 * R * Math.cos(a)); g.add(m);
+        }
+        k.scene.add(g); pies.push(g);
+      });
+      k.hud.innerHTML = `<span>Founders keep</span>` + stages.slice(0, 3).map(([n, , o]) => `<span>${n} <b>${(o.f * 100).toFixed(0)}%</b></span>`).join("") +
+        `<span>Exit pie <b>€${fmt(r.shown.exit, 0)}M</b></span><span>Amber: founders · Blue: investors · Brass: option pool</span>`;
+    },
+  };
+}
+
+const lab = createLab({
+  id: "L11",
+  area: "Fundraising & grants",
+  title: "Dilution",
+  goal: "Decide <b>how much to raise, at what price, and from whom</b> (investors, grants or customers) so that you and your co-founder end up with the most money at exit, not the biggest cap-table share today.",
+  story: "It is 2027. You and a technical co-founder own <b>100%</b> of a new physical-product company. The plan has three steps: a <b>seed</b> round to prove a pilot works at a customer (about <b>€3M</b> of work), a <b>Series A</b> to build a production-ready system (about <b>€9M</b>), and a <b>Series B</b> to scale. An exit of a few hundred million euros is the aim. Every round gives investors a slice and every pool of options for employees gives away another: the pie grows, but your slice shrinks. You never calculate: you choose between real offers.",
+  params: [
+    { key: "seedRaise", label: "Seed: money from investors (€M)", min: 0.5, max: 6, step: 0.25, value: 3, format: (v) => `€${fmt(v, 2)}M` },
+    { key: "grant", label: "Seed: grant money, no shares given (€M)", min: 0, max: 3, step: 0.25, value: 0, format: (v) => `€${fmt(v, 2)}M`, hint: "Grants, customer prepayments and other non-dilutive money" },
+    { key: "seedPre", label: "Seed: company value before the money (€M)", min: 6, max: 20, step: 1, value: 9, format: (v) => `€${v}M` },
+    { key: "aRaise", label: "Series A: money from investors (€M)", min: 4, max: 25, step: 0.5, value: 11, format: (v) => `€${fmt(v, 1)}M`, hint: "The next milestone costs about €9M; a buffer adds about €2M" },
+    { key: "aPre", label: "Series A: company value before the money (€M)", min: 20, max: 70, step: 1, value: 40, format: (v) => `€${v}M`, hint: "Investors price where the company stands, not how much you ask for" },
+    { key: "pool", label: "Option pool after Series A (% of company)", min: 0, max: 25, step: 1, value: 15, format: (v) => `${v}%`, hint: "Hiring needs about 12% in this plan" },
+    { key: "poolPre", label: "Who pays for the pool", options: [{ value: 1, label: "Before the money (founders pay)" }, { value: 0, label: "After the money (shared)" }], value: 1, hint: "Pre-money versus post-money option pool" },
+    { key: "exit", label: "Exit value if the milestone is reached", options: [{ value: 200, label: "€200M" }, { value: 400, label: "€400M" }, { value: 800, label: "€800M" }], value: 400 },
+    { key: "view", label: "The pies show", options: [{ value: 1, label: "Milestone reached" }, { value: 0, label: "Milestone missed" }], value: 1, hint: "The numbers above always weigh both cases" },
+  ],
+  metrics: [
+    { key: "euros", label: "Founders' money at exit", unit: "€M together", format: (v) => v.toFixed(0) },
+    { key: "share", label: "Founders' share at exit", unit: "%", format: (v) => v.toFixed(0) },
+    { key: "afterA", label: "Founders' share after Series A", unit: "%", format: (v) => v.toFixed(0) },
+    { key: "pHit", label: "Chance Series A milestone is reached", unit: "%", format: (v) => v.toFixed(0) },
+    { key: "raised", label: "Investor money raised in total", unit: "€M", format: (v) => v.toFixed(0) },
+    { key: "grant", label: "Grant money (no shares)", unit: "€M", format: (v) => v.toFixed(1) },
+  ],
+  model,
+  chart: {
+    title: "Founders' money vs size of the Series A",
+    xLabel: "Series A: money raised from investors (€M)", yLabel: "founders' money at exit (€M)",
+    xMin: 4, xMax: 25, yMin: 0,
+    xFormat: (v) => `€${Math.round(v)}M`,
+    series(p) {
+      const xs = []; for (let r = 4; r <= 25; r += 0.5) xs.push(r);
+      const at = xs.map((r) => model({ ...p, aRaise: r }));
+      const pts = (f) => xs.map((r, i) => [r, f(at[i])]);
+      return [
+        { name: "average of both cases", color: "brass", points: pts((m) => m.values.euros) },
+        { name: "if the milestone is reached", color: "ok", dashed: true, points: pts((m) => m.hit.c.f * p.exit) },
+        { name: "if the milestone is missed", color: "jam", dashed: true, points: pts((m) => m.miss.c.f * p.exit * MISS_EXIT) },
+      ];
+    },
+    marker: (p, r) => [p.aRaise, r.values.euros],
+    note: "Illustrative model, not a forecast. Round sizes and prices are in the range of Carta's published medians (about 20% sold at seed and Series A, 13-17% at Series B), but the chance of reaching a milestone, the price penalty for a team with little cash, the exit values and the 12% hiring need are assumptions. The price is held fixed as the round grows, because investors price where the company stands. It ignores liquidation preferences, convertible notes, unused options and tax.",
+  },
+  stage: { floor: [40, 26], view: 15 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. The seed round",
+      situation: "You need <b>€3M</b> to prove the pilot works, plus a small buffer (about €0.5M). Your lead investor offers <b>€3M at a €9M pre-money valuation</b> (you would sell 25%). Another route: take <b>€1.5M</b> from the same investor at the same valuation and win a <b>€2.5M innovation grant</b>, which gives no shares (it takes months of work and may not be awarded). The Series A is planned at €11M and a €40M valuation in every case.",
+      baseline: {},
+      options: [
+        { id: "A", label: "€3M from investors", detail: "The full round, no buffer; 25% sold", params: { seedRaise: 3, grant: 0 } },
+        { id: "B", label: "€1.5M from investors plus the €2.5M grant", detail: "€4.0M in the bank; 14% sold", params: { seedRaise: 1.5, grant: 2.5 } },
+        { id: "C", label: "€4.5M from investors", detail: "A big buffer; 33% sold", params: { seedRaise: 4.5, grant: 0 } },
+        { id: "D", label: "€1.5M from investors, no grant", detail: "The leanest round; 14% sold", params: { seedRaise: 1.5, grant: 0 } },
+      ],
+      rankBy: "euros", better: "higher", size: false,
+      question: "Your call: which seed plan leaves you and your co-founder with the most money at exit?",
+      learning: "<p><b>B wins: replace equity with grant money.</b> Founders' money at exit: <b>B ≈ €132M</b>, A ≈ €108M, C ≈ €99M, D ≈ €93M. B is about 1.2× A. It sells 14% instead of 25%, and with €4.0M in the bank it reaches the pilot milestone with a half-million buffer, so the Series A investor prices a team with runway.</p><p><b>The bigger round (A) is not the safe one.</b> €3M is exactly the cost of the milestone: no buffer, so the next investor negotiates against a team that runs out of cash within months (the model takes about 15% off the Series A price). C buys buffer you do not need and sells a third of the company. D shows what the grant is worth: if it is not awarded, you are short of the milestone, need a bridge at a discount and enter Series A weak.</p><p><b>Rule of thumb:</b> raise enough to reach the next milestone plus a buffer of about 3 to 6 months, and fill as much of it as you can with non-dilutive money. A grant is slow and uncertain, so start early and keep a fallback.</p>",
+    },
+    {
+      title: "Test 2. How big a Series A",
+      situation: "The seed is done (€1.5M from investors plus the €2.5M grant). The next milestone, a production-ready system proven on site, costs about <b>€9M</b>; with a buffer about <b>€11M</b>. Four term sheets arrive, and the bigger the cheque, the higher the price the investors will pay. Whatever the Series A leaves unfunded, the Series B will have to raise.",
+      baseline: { seedRaise: 1.5, grant: 2.5, aRaise: 8, aPre: 36 },
+      options: [
+        { id: "A", label: "€8M at €36M pre-money", detail: "Lowest dilution (18%), but short of the €9M cost", params: { aRaise: 8, aPre: 36 } },
+        { id: "B", label: "€11M at €40M pre-money", detail: "The milestone plus a buffer (22% sold)", params: { aRaise: 11, aPre: 40 } },
+        { id: "C", label: "€14M at €44M pre-money", detail: "A bigger buffer (24% sold)", params: { aRaise: 14, aPre: 44 } },
+        { id: "D", label: "€20M at €48M pre-money", detail: "As much as the market gives (29% sold)", params: { aRaise: 20, aPre: 48 } },
+      ],
+      rankBy: "euros", better: "higher", size: false,
+      question: "Your call: which round leaves you and your co-founder with the most money at exit?",
+      learning: "<p><b>B wins, but the shape matters more than the winner.</b> Founders' money at exit: <b>B ≈ €132M</b>, C ≈ €130M, D ≈ €127M, A ≈ €102M. Falling short of the milestone (A) costs about a quarter of the outcome, because the chance of reaching it falls from 65% to 38% and a miss means a down round. Raising too much (C, D) costs only 1% to 4%.</p><p><b>The risk is not symmetric:</b> too little money is a cliff, too much is a gentle slope. So when unsure, lean to the buffer, never to the lowest dilution. The big round D is not wrong in itself; it only pays off if investors pay a much higher price: it would need about €54M pre-money (35% above B's price) to match B, because spare early cash is bought at a pre-milestone price and then partly sits idle.</p><p><b>Rule of thumb:</b> raise the cost of the next value-inflection point plus a buffer of about 20%. Not as much as possible and not as little as possible.</p>",
+    },
+    {
+      title: "Test 3. The option pool",
+      situation: "The Series A is <b>€11M at a €40M pre-money valuation</b>. The term sheet asks for a <b>15% option pool</b> for future employees, created <b>before</b> the investors' money, so it comes out of your side. The hiring plan needs about <b>12%</b> in total. What do you push for?",
+      baseline: { seedRaise: 1.5, grant: 2.5, aRaise: 11, aPre: 40, pool: 15, poolPre: 1 },
+      options: [
+        { id: "A", label: "Accept: 15% before the money", detail: "The term sheet as drafted", params: { pool: 15, poolPre: 1 } },
+        { id: "B", label: "15% counted after the money", detail: "Investors share the cost of the pool", params: { pool: 15, poolPre: 0 } },
+        { id: "C", label: "A smaller pool: 10% before the money", detail: "Fewer options given away, but below the 12% hiring plan", params: { pool: 10, poolPre: 1 } },
+        { id: "D", label: "A bigger pool: 20% before the money", detail: "Room for the whole team", params: { pool: 20, poolPre: 1 } },
+      ],
+      rankBy: "euros", better: "higher", size: false,
+      question: "Your call: which pool terms leave you and your co-founder with the most money at exit?",
+      learning: "<p><b>B wins: who pays matters.</b> Founders' money at exit: <b>B ≈ €135M</b>, A ≈ €132M, C ≈ €127M, D ≈ €122M. Moving the same 15% pool from before the money to after it is worth about €3.5M to the founders (+3%). In the \"before\" version the pool is carved out of your side: about €3.7M of the €40M headline price never reaches you, so the effective pre-money is about €36M. This is called the <b>option pool shuffle</b>.</p><p><b>Size matters more than the shuffle, but only up to the plan.</b> 20% (D) costs about €10M against A, because the extra options are given away. Going below the plan (C) looks cheap but backfires: with less than the 12% you need, hiring slows and the chance of reaching the milestone falls from 65% to 59%. No pool at all would leave about €119M.</p><p><b>Rule of thumb:</b> size the pool to the hiring plan for the next 12 to 18 months, ask for it to be counted after the money, and compare term sheets by the <b>effective</b> pre-money (headline minus the new pool), not the headline.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Dilution compounds, and what counts is your money at exit, not your share today.</b> Each round sells 15-25% (Carta medians: about 20% at seed and Series A, 13-17% at Series B), and the median founding team holds about 36% by the Series A.",
+    "<b>Raise the cost of the next milestone plus a buffer of about 20%.</b> Too little money is a cliff (a missed milestone, a down round); too much is a slope (more shares sold before the company is worth more).",
+    "<b>Replace equity with non-dilutive money where you can:</b> a €2.5M grant instead of €1.5M of extra equity raised the founders' outcome by about 20% in the seed test. Grants are slow and uncertain, so keep a fallback.",
+    "<b>Read the effective pre-money.</b> A pool created before the money comes out of the founders' side. Size it to the hiring plan and ask for it after the money.",
+  ],
+});
+</script>
+</body>
+</html>

@@ -26,7 +26,7 @@ Write everything in **English**: chat, content, feedback, code and commits. This
 ## Hard rules
 1. **`log/events.jsonl` changes only through `uv run foundry record ...`.** Never edit or delete lines. A wrong event is cancelled with `record void '{"target_ts": "...", "reason": "..."}'`.
 2. **Never show `reveal.md` before Viktor has submitted his drill answer and it is graded.**
-3. **Republishing the artifact:** in a session that has not published it yet, first `Artifact read` the URL above, then publish `web/index.html` with `url` set to it and `files` = `{"state.json": "web/state.json"}` (add `labs/<name>.html` only when a lab page changed).
+3. **Republishing the artifact:** in a session that has not published it yet, first `Artifact read` the URL above, then publish `web/index.html` with `url` set to it and `files` = `{"state.json": "web/state.json"}`. Add `kit/lab.js`, `kit/lab.css` or `labs/<name>.html` only when they changed (files left out stay published).
 4. **Vault notes:** one short note per concept learned to `C:\Users\Viktor Skovbak\Viktors Champer of Secrets\raw\foundry-YYYY-MM-DD-<slug>.md` (the law in Viktor's own words + his application). Never write into the vault's `wiki/`; Viktor runs `/ingest` weekly.
 5. **Cost:** subscription only. No paid APIs, hosting or databases until the Foundry has proved its value.
 6. Models and agents follow the global rules (Opus for judgement and grading; one lean Sonnet agent per tool-heavy task; no workflows unless Viktor asks).

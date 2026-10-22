@@ -19,6 +19,7 @@ export function fmt(x, digits) {
   if (x === Infinity) return "∞";
   if (x === -Infinity) return "−∞";
   if (!Number.isFinite(x)) return "–";
+  if (Math.abs(x) < 1e-9) x = 0; // no "-0"
   if (digits !== undefined) return x.toFixed(digits);
   const a = Math.abs(x);
   if (a >= 10000) return Math.round(x).toLocaleString("en-US");
@@ -159,7 +160,8 @@ export function createLab(cfg) {
     const xMin = c.xMin ?? Math.min(...xs), xMax = c.xMax ?? Math.max(...xs);
     const marker = c.marker ? c.marker(current, result) : null;
     const yMaxRaw = c.yMax ?? Math.max(1e-9, ...ys, ...(marker && Number.isFinite(marker[1]) ? [marker[1]] : []));
-    const yMin = c.yMin ?? 0;
+    // Axis starts at zero unless the data goes negative (e.g. cash), or the lab sets yMin.
+    const yMin = c.yMin ?? Math.min(0, ...ys);
     const ticks = niceTicks(yMin, yMaxRaw);
     const yMax = ticks[ticks.length - 1];
     const x = (v) => L + ((v - xMin) / (xMax - xMin || 1)) * (W - L - R);
@@ -206,16 +208,30 @@ export function createLab(cfg) {
     });
     const bestId = test.best ? test.best(rows, baseVal) :
       rows.reduce((a, b) => ((test.better === "higher" ? b.v > a.v : b.v < a.v) ? b : a)).id;
-    return { base, baseVal, rows, bestId };
+    // A pick within 2% of the best counts as right: that is a near-tie, not a judgement error.
+    // Tests with a custom best() rule (thresholds, constraints) need the exact option.
+    const bestRow = rows.find((r) => r.id === bestId);
+    const isRight = (id) => {
+      if (id === bestId) return true;
+      if (test.best) return false;
+      const r = rows.find((x) => x.id === id);
+      return !!r && Math.abs(r.v - bestRow.v) <= 0.02 * Math.abs(bestRow.v);
+    };
+    return { base, baseVal, rows, bestId, isRight };
   }
 
-  function sizeOf(ratio) { return SIZES.find((s) => ratio >= s.lo && ratio < s.hi)?.id || "small"; }
+  // A size call is right if the effect falls in that bucket, with 10% grace at the edges
+  // (3.2x on the "about 2x" side of 3x is close enough; the call was about magnitude).
+  function sizeOk(ratio, id) {
+    const s = SIZES.find((x) => x.id === id);
+    return !!s && ratio >= s.lo * 0.9 && ratio < s.hi * 1.1;
+  }
 
   function renderTabs() {
     tabs.innerHTML = cfg.tests.map((t, i) => {
       const c = calls[i];
       let mark = "";
-      if (c.locked) mark = c.pick === evaluate(t).bestId ? `<span class="mark right">✓</span>` : `<span class="mark wrong">✗</span>`;
+      if (c.locked) mark = evaluate(t).isRight(c.pick) ? `<span class="mark right">✓</span>` : `<span class="mark wrong">✗</span>`;
       return `<button type="button" class="tab" role="tab" aria-selected="${i === active}" data-i="${i}">Test ${i + 1}${mark}</button>`;
     }).join("");
     tabs.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => { active = Number(b.dataset.i); renderTest(); }));
@@ -255,17 +271,18 @@ export function createLab(cfg) {
     function reveal() {
       const best = ev.rows.find((r) => r.id === ev.bestId);
       const mine = ev.rows.find((r) => r.id === c.pick);
-      const pickRight = c.pick === ev.bestId;
-      const sizeRight = t.size === false ? null : sizeOf(mine.ratio) === c.size;
+      const pickRight = ev.isRight(c.pick);
+      const sizeRight = t.size === false ? null : sizeOk(mine.ratio, c.size);
       const sizeText = t.size === false ? "" :
         ` Your size call: <b class="${sizeRight ? "right" : "wrong"}">${SIZES.find((s) => s.id === c.size).label.split(" (")[0]}</b>; the real effect of ${esc(mine.id)} is <b>${fmt(mine.ratio, 1)}×</b>.`;
-      const head = pickRight ? `<b class="right">Right call.</b> ${esc(best.id)} helps most.` :
-        `<b class="wrong">Not the best call.</b> You picked ${esc(mine.id)}; ${esc(best.id)} helps most.`;
+      const head = c.pick === ev.bestId ? `<b class="right">Right call.</b> The best answer is ${esc(best.id)}.` :
+        pickRight ? `<b class="right">Right call, near-tie.</b> ${esc(mine.id)} is within 2% of the best, ${esc(best.id)}.` :
+        `<b class="wrong">Not the best call.</b> You picked ${esc(mine.id)}; the best answer is ${esc(best.id)}.`;
       body.querySelector(".reveal").innerHTML = `
         <div class="verdict ${pickRight ? "right" : "wrong"}">${head}${sizeText}</div>
-        <table class="results"><thead><tr><th>Option</th><th class="r">${esc(m?.label || t.rankBy)}</th><th class="r">vs today</th><th></th></tr></thead>
+        <table class="results"><thead><tr><th>Option</th><th class="r">${esc(m?.label || t.rankBy)}</th>${t.size === false ? "" : `<th class="r">vs today</th>`}<th></th></tr></thead>
         <tbody>${ev.rows.map((r) => `<tr class="${r.id === ev.bestId ? "best" : ""}"><td>${esc(r.id)} · ${esc(r.label)}</td><td class="r num">${esc(mf(r.v))}</td>
-          <td class="r num">${Number.isFinite(r.ratio) ? fmt(r.ratio, 1) + "×" : "–"}</td><td><button type="button" data-id="${esc(r.id)}">Show</button></td></tr>`).join("")}</tbody></table>
+          ${t.size === false ? "" : `<td class="r num">${Number.isFinite(r.ratio) && r.ratio > 0 ? fmt(r.ratio, 1) + "×" : "–"}</td>`}<td><button type="button" data-id="${esc(r.id)}">Show</button></td></tr>`).join("")}</tbody></table>
         <div class="learning"><span class="label">What this teaches</span>${t.learning}</div>`;
       body.querySelectorAll(".results button").forEach((b) => b.addEventListener("click", () => {
         const r = ev.rows.find((x) => x.id === b.dataset.id);
@@ -276,11 +293,11 @@ export function createLab(cfg) {
 
   function score() {
     const done = cfg.tests.map((t, i) => [t, calls[i]]).filter(([, c]) => c.locked);
-    const right = done.filter(([t, c]) => c.pick === evaluate(t).bestId).length;
+    const right = done.filter(([t, c]) => evaluate(t).isRight(c.pick)).length;
     const sized = done.filter(([t]) => t.size !== false);
     const sizeRight = sized.filter(([t, c]) => {
       const ev = evaluate(t);
-      return sizeOf(ev.rows.find((r) => r.id === c.pick).ratio) === c.size;
+      return sizeOk(ev.rows.find((r) => r.id === c.pick).ratio, c.size);
     }).length;
     testsPanel.querySelector(".score").innerHTML = `Calls right: <b class="num">${right}/${done.length}</b> · sizes right: <b class="num">${sizeRight}/${sized.length}</b> · ${cfg.tests.length - done.length} test${cfg.tests.length - done.length === 1 ? "" : "s"} left`;
     return { right, done: done.length, sizeRight, sized: sized.length };

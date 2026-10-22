@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Bullwhip Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model: four tiers, order-up-to ordering, 40 weeks, deterministic ---------- */
+/* ---- MODEL START ---- */
+const WEEKS = 40, STEP_WEEK = 5, BASE = 100, STEP = 10, TIERS = 4, RUSH_FROM = 6, RUSH_LEN = 8;
+// Tiers: 0 retailer, 1 distributor, 2 Viktor's factory, 3 component supplier. Customers buy 100 a week; +10% from week 5.
+// Each tier forecasts, then orders enough to restore "stock + on order" to (delay + safety) weeks of forecast demand.
+
+function simulate(p) {
+  const L = p.ship, N = WEEKS;                                   // index 0 = week 1
+  const cust = Array.from({ length: N }, (_, t) => (t + 1 >= STEP_WEEK ? BASE + STEP : BASE));
+  const mk = (v) => Array.from({ length: TIERS }, () => new Array(N).fill(v));
+  const ord = mk(BASE), shp = mk(BASE), stock = mk(0);           // orders placed, shipments sent, stock minus backlog
+  const safe = [p.safety, p.safety, p.safety + p.extraBuffer, p.safety];
+  const inv = safe.map((s) => s * BASE), back = new Array(TIERS).fill(0);
+  const fc = new Array(TIERS).fill(BASE), onOrder = new Array(TIERS).fill((L + 1) * BASE);
+  const at = (a, t) => (t < 0 ? BASE : a[t]);
+  for (let t = 0; t < N; t++) {
+    const week = t + 1, rush = week >= RUSH_FROM && week < RUSH_FROM + RUSH_LEN;
+    for (let i = 0; i < TIERS; i++) {
+      const factory = i === 2, plan = factory && p.plan === 1;
+      const demand = i === 0 ? cust[t] : at(ord[i - 1], t - 1);                  // what this tier is asked for
+      const arrive = i < TIERS - 1 ? at(shp[i + 1], t - L) : at(ord[i], t - 1 - L);
+      inv[i] += arrive; onOrder[i] -= arrive;
+      const need = back[i] + demand, cap = plan ? fc[i] * 1.05 : Infinity;      // allocation by past sales
+      const s = Math.min(need, inv[i], cap);
+      inv[i] -= s; back[i] = need - s; shp[i][t] = s;
+      if (plan && back[i] > cap) { onOrder[i - 1] -= back[i] - cap; back[i] = cap; } // orders beyond allocation are cancelled
+      const signal = p.share || plan ? cust[t] : demand;                         // real sell-through or the order book
+      fc[i] += (factory ? p.myReact : p.react) * (signal - fc[i]);
+      let o = Math.max(0, (L + 1 + safe[i]) * fc[i] - (inv[i] - back[i] + onOrder[i]));
+      o = Math.round(o / p.batch) * p.batch;
+      if (i === 0 && rush) o *= 1 + p.rush;                                      // retailers inflate orders in a shortage
+      if (factory && week >= RUSH_FROM + 2 && week < RUSH_FROM + 2 + RUSH_LEN) o *= 1 + p.pad; // Viktor pads his component orders
+      ord[i][t] = o; onOrder[i] += o; stock[i][t] = inv[i] - back[i];
+    }
+  }
+  return { cust, ord, stock };
+}
+
+const range = (a) => Math.max(...a.slice(STEP_WEEK - 1)) - Math.min(...a.slice(STEP_WEEK - 1));
+
+function model(p) {
+  const { cust, ord, stock } = simulate(p);
+  const sup = ord[2];                                             // what the component supplier is asked for
+  const swing = range(sup) / STEP, peak = Math.max(...sup), peakWeek = sup.indexOf(peak) + 1;
+  let last = 0;                                                   // last week the 4-week average is off the new level
+  for (let t = STEP_WEEK - 1; t < WEEKS; t++) {
+    const avg = (sup[t] + sup[t - 1] + sup[t - 2] + sup[t - 3]) / 4;
+    if (Math.abs(avg - (BASE + STEP)) > 6) last = t + 1;
+  }
+  const settle = last >= WEEKS ? 36 : Math.max(0, last - STEP_WEEK + 1);
+  const caption = `Customers ask for ${STEP} more a week (+${STEP}%). Your component supplier is asked for anything from ${Math.round(Math.min(...sup.slice(STEP_WEEK - 1)))} to ${Math.round(peak)} a week, peaking in week ${peakWeek}: a swing ${swing.toFixed(1)}x the size of the real change.`;
+  return { values: { swing, fstock: range(stock[2]) / BASE, settle, peak }, caption, peakWeek, traj: { cust, ord, stock } };
+}
+/* ---- MODEL END ---- */
+
+/* ---------- The scene: four warehouses; crates = stock, red slabs = unfilled orders, pillars and lamps = orders placed ---------- */
+function scene(k) {
+  const { box, cyl, sphere, mats, glow, onTick } = k;
+  const XS = [-9, -3, 3, 9], PER_CRATE = 20, PER_PILLAR = 30;
+  const tiers = XS.map((x, i) => {
+    box(5, 0.3, 5, i === 2 ? mats.steel : mats.dark, x, 0, 0);                  // Viktor's factory sits on the lighter plate
+    const crates = Array.from({ length: 20 }, (_, n) => box(1.0, 0.8, 1.0, mats.brass, x - 0.7 + (n % 2) * 1.4, 0.3 + Math.floor(n / 4) * 0.85, -0.7 + (Math.floor(n / 2) % 2) * 1.4));
+    const slabs = Array.from({ length: 6 }, (_, n) => box(0.7, 0.25, 0.7, mats.jam, x - 1.9 + n * 0.76, 0.3, 3.4));
+    const lampMat = glow(0.3);
+    sphere(0.45, lampMat, x, 6.6, 0);
+    return { crates, slabs, lampMat, pillar: cyl(0.35, 1, mats.cool, x, 0, -3.4) };
+  });
+  const demand = cyl(0.35, 1, mats.brass, -14, 0, 0);                            // what customers really buy
+  let R = null, clock = 0;
+  const at = (a, t) => { const w = Math.min(a.length - 1, Math.floor(t)); return a[w] + (a[Math.min(a.length - 1, w + 1)] - a[w]) * (t - w); };
+  function draw(t) {
+    const { cust, ord, stock } = R.traj;
+    tiers.forEach((ti, i) => {
+      const s = stock[i][Math.min(WEEKS - 1, Math.round(t))];
+      ti.crates.forEach((c, n) => { c.visible = s > 0 && n < Math.round(s / PER_CRATE); });
+      ti.slabs.forEach((c, n) => { c.visible = s < 0 && n < Math.ceil(-s / PER_CRATE); });
+      const o = at(ord[i], t);
+      ti.pillar.scale.y = Math.max(0.05, o / PER_PILLAR); ti.pillar.position.y = ti.pillar.scale.y / 2;
+      ti.lampMat.emissiveIntensity = Math.min(5, 0.15 + (o / BASE) * 1.2);
+    });
+    const c = at(cust, t);
+    demand.scale.y = c / PER_PILLAR; demand.position.y = demand.scale.y / 2;
+    k.hud.innerHTML = `<span>Week <b>${Math.floor(t) + 1}</b></span><span>Customers buy <b>${Math.round(c)}</b></span>` +
+      ["Retailer", "Distributor", "Viktor", "Supplier"].map((n, i) => `<span>${n} orders <b>${Math.round(at(ord[i], t))}</b></span>`).join("");
+  }
+  onTick((dt) => {
+    if (!R) return;
+    clock += dt * 2.2;                                   // 2.2 weeks a second, then a short pause at the end
+    if (clock > WEEKS + 2) clock = 0;
+    draw(Math.min(clock, WEEKS - 1));
+  });
+  return { update(p, r) { R = r; if (k.reduceMotion) { clock = r.peakWeek - 1; draw(clock); } } };
+}
+
+const lab = createLab({
+  id: "L13",
+  area: "Systems thinking",
+  title: "The bullwhip effect",
+  goal: "Decide <b>how to run orders through a chain of suppliers and customers</b>: which fix calms the swings, how to read your own orders, and what to do when everyone panics in a shortage.",
+  story: "It is 2028. Your first product sells <b>100 units a week</b> through a chain of four steps: <b>retailer, distributor, your factory, and the one supplier of your key component</b>. Shipping between steps takes <b>2 weeks</b>, and an order takes another week to arrive. Each step orders from the step behind it using the orders it receives. Then consumers raise their buying by just <b>10%</b> in week 5. Watch what your supplier sees. The lamps and pillars show the orders each step places, crates are stock, red slabs are orders that could not be filled.",
+  params: [
+    { key: "share", label: "What every step plans from", options: [{ value: 0, label: "Orders it receives" }, { value: 1, label: "Real sell-through, shared" }], value: 0, hint: "Forecast made from the next step's orders, or from what consumers actually buy" },
+    { key: "ship", label: "Shipping time between steps", options: [{ value: 1, label: "1 week" }, { value: 2, label: "2 weeks" }, { value: 3, label: "3 weeks" }], value: 2 },
+    { key: "react", label: "How strongly others react to news", options: [{ value: 0.15, label: "Smooth" }, { value: 0.3, label: "Normal" }, { value: 0.6, label: "Strong" }], value: 0.3, hint: "Weight put on the latest orders in the forecast (alpha)" },
+    { key: "myReact", label: "How strongly your purchasing reacts", options: [{ value: 0.15, label: "Smooth (a quarter)" }, { value: 0.3, label: "Normal" }, { value: 0.7, label: "Strong (last 2 weeks)" }, { value: 1, label: "Last week only" }], value: 0.3, hint: "Weight put on the latest orders in the forecast (alpha)" },
+    { key: "batch", label: "Order lot size", options: [{ value: 2, label: "Any amount" }, { value: 10, label: "Pallet lots (10)" }, { value: 20, label: "Large lots (20)" }], value: 10, hint: "Orders are rounded to whole lots" },
+    { key: "safety", label: "Safety stock at every step", options: [{ value: 0, label: "None" }, { value: 0.5, label: "Half a week" }, { value: 1, label: "1 week" }, { value: 1.5, label: "1.5 weeks" }], value: 0.5 },
+    { key: "extraBuffer", label: "Extra component buffer you build", options: [{ value: 0, label: "None" }, { value: 1, label: "+1 week" }, { value: 2, label: "+2 weeks" }], value: 0 },
+    { key: "rush", label: "Shortage panic: retailers over-order by", options: [{ value: 0, label: "No panic" }, { value: 0.2, label: "20%" }, { value: 0.4, label: "40%" }], value: 0, hint: "For 8 weeks from week 6, retailers order more than they need to secure supply" },
+    { key: "pad", label: "Extra components you order in a panic", options: [{ value: 0, label: "None" }, { value: 0.25, label: "+25%" }, { value: 0.5, label: "+50%" }], value: 0 },
+    { key: "plan", label: "How you read incoming orders", options: [{ value: 0, label: "Take them at face value" }, { value: 1, label: "Check against sell-through, allocate by past sales" }], value: 0 },
+  ],
+  metrics: [
+    { key: "swing", label: "Supplier order swing", unit: "× the real change", format: (v) => v.toFixed(1) },
+    { key: "peak", label: "Biggest weekly order to supplier", unit: "units", format: (v) => String(Math.round(v)) },
+    { key: "fstock", label: "Your stock swing", unit: "weeks of sales", format: (v) => v.toFixed(1) },
+    { key: "settle", label: "Weeks until orders settle", unit: "weeks", format: (v) => (v >= 36 ? "36+" : String(v)) },
+  ],
+  model,
+  chart: {
+    title: "Orders placed each week, step by step",
+    xLabel: "week", yLabel: "units ordered per week",
+    xMin: 1, xMax: 40, yMin: 0,
+    xFormat: (v) => String(Math.round(v)),
+    series(p, r) {
+      const { cust, ord } = r.traj, pts = (a) => a.map((v, i) => [i + 1, v]);
+      return [
+        { name: "consumers buy", color: "dim", dashed: true, points: pts(cust) },
+        { name: "retailer orders", color: "cool", points: pts(ord[0]) },
+        { name: "distributor orders", color: "ok", points: pts(ord[1]) },
+        { name: "your factory orders (supplier sees this)", color: "brass", points: pts(ord[2]) },
+        { name: "supplier orders from its own sources", color: "jam", points: pts(ord[3]) },
+      ];
+    },
+    note: "Illustrative model: four steps, each forecasting from the orders it receives and ordering up to a target stock, with 2-week shipping and 1-week order delay. Shaped after the pattern in Procter & Gamble's diaper chain and in Sterman's beer game (swings grow at each step upstream); the sizes are not measured data.",
+  },
+  stage: { floor: [34, 14], view: 22 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. One change to calm the swings",
+      situation: "Consumers raised their buying 10% and your component supplier is now being asked for orders that swing about <b>10 times</b> the real change. Your factory's stock jumps around by 1.4 weeks of sales. You and your partners can agree <b>one</b> change for the chain.",
+      baseline: {},
+      options: [
+        { id: "A", label: "Everyone keeps more safety stock", detail: "A cushion of 1.5 weeks at every step instead of half a week", params: { safety: 1.5 } },
+        { id: "B", label: "Order in smaller lots", detail: "Orders in any amount instead of lots of 10", params: { batch: 2 } },
+        { id: "C", label: "Share real sell-through with every step", detail: "Each step plans from what consumers actually buy, not from the next step's orders", params: { share: 1 } },
+        { id: "D", label: "Halve the shipping times", detail: "1 week instead of 2 between steps", params: { ship: 1 } },
+      ],
+      rankBy: "swing", better: "lower",
+      question: "Your call: which single change cuts the swing at your supplier most?",
+      learning: "<p><b>Sharing real sell-through wins by far.</b> When every step plans from what consumers actually buy instead of from the next step's orders, the swing at your supplier falls from about 10× the real change to about 2×, roughly <b>5× calmer</b>, and your factory's stock swing from 1.4 to 0.5 weeks of sales. Halving shipping times helps a little (7×, about 1.4× calmer). Smaller lots help least (8.8×, about 1.1×) because lots here are small next to a week's sales; they matter more when a lot is bigger than a week's sales.</p><p><b>The instinct (more safety stock) makes it worse:</b> a bigger cushion means every step must also stock up on the cushion when the forecast rises, so the swing grows to 15× (1.5× bigger) and more cash sits in stock. Safety stock covers surprises; it does not remove the cause, which is that each step sees only its neighbour's orders.</p><p><b>Rule of thumb:</b> fix the information first (everyone sees real sell-through), then shorten delays, then shrink lots. Treat safety stock as insurance for noise, not as a cure for swings.</p>",
+    },
+    {
+      title: "Test 2. How your purchasing manager forecasts",
+      situation: "The other steps behave normally, but your purchasing manager reacts <b>strongly</b>: the forecast leans on the last two weeks of orders. Your orders to the supplier swing about <b>20 times</b> the real change. You choose the rule you give them.",
+      baseline: { myReact: 0.7 },
+      options: [
+        { id: "A", label: "Average the last quarter", detail: "Weigh about 12 weeks of orders; one odd week barely moves the forecast", params: { myReact: 0.15 } },
+        { id: "B", label: "Order what was asked for last week", detail: "Follow the most recent number exactly", params: { myReact: 1 } },
+        { id: "C", label: "Keep looking at the last two weeks", detail: "No change", params: { myReact: 0.7 } },
+        { id: "D", label: "Average the last month", detail: "Weigh about 6 weeks of orders", params: { myReact: 0.3 } },
+      ],
+      rankBy: "swing", better: "lower",
+      question: "Your call: which forecasting rule calms your orders most?",
+      learning: "<p><b>Smooth over a quarter.</b> That cuts the swing at your supplier from about 20× to about 7×, roughly <b>2.9× calmer</b>. Averaging the last month gets you to about 10× (2×). Chasing last week's number is worse: about 28× (0.7×), because you pass on every wobble of the orders you receive and add the delay on top. Going even further, to a half-year average, would only reach about 6×: the gain flattens, and you become slow to see a real, lasting shift in demand.</p><p><b>Rule of thumb:</b> react to the trend, not the week. A window of several times the total delay (here about 3 weeks, so around 12) is the sweet spot in this model. This is the part of the chain you control; it does not remove the swings you receive from others, which is why sharing sell-through (Test 1) is bigger still.</p>",
+    },
+    {
+      title: "Test 3. A shortage: what do you do with the orders?",
+      situation: "A component shortage is in the news. For 8 weeks from week 6, retailers order <b>40% more</b> than they sell, to secure supply, and the orders that reach you are inflated. Real consumer demand is unchanged: still +10%. You can take orders at face value, or change how you read them.",
+      baseline: { rush: 0.4 },
+      options: [
+        { id: "A", label: "Order extra components to be safe", detail: "+50% on your component orders during the panic, because everyone else is doing it", params: { pad: 0.5 } },
+        { id: "B", label: "Check orders against sell-through and allocate by past sales", detail: "Plan from what consumers really buy; ship customers a share based on their history; cancel the excess", params: { plan: 1 } },
+        { id: "C", label: "Build a component buffer now", detail: "Two extra weeks of component stock, ordered at once", params: { extraBuffer: 2 } },
+        { id: "D", label: "Take the orders at face value", detail: "Fill what is asked for and order components to match", params: {} },
+      ],
+      rankBy: "swing", better: "lower",
+      question: "Your call: which policy keeps the orders to your supplier calmest?",
+      learning: "<p><b>Read the orders against real sell-through, and allocate by history.</b> Taking inflated orders at face value gives a swing of about 36× at the supplier (peak order about 360 a week against 110 of real demand); the policy that plans from sell-through and ships by past sales brings it to about 16×, roughly <b>2.3× calmer</b>, and your stock swing from 2.5 to 2.0 weeks of sales. Padding your own component orders makes it worse (54×, about 0.7×), and a big buffer bought in the panic does too (42×, about 0.9×).</p><p><b>Why:</b> when supply looks short, each step orders more than it needs, which makes the shortage look worse; then the orders vanish when the shortage ends and everyone is left with stock. You are one of the steps: if you pad, you are part of the wave.</p><p><b>Rule of thumb:</b> in a shortage, allocate scarce supply by past sales rather than by the size of the current order, tell customers you do so, and do not buy more than real sell-through supports. In this model it works because real demand is only slightly higher; if it truly jumped, you would need to re-set the allocation fast.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Small changes in consumer demand become large swings upstream.</b> Here a 10% rise became orders swinging about 10× as much at the component supplier, with every step adding to it.",
+    "<b>The structure causes it:</b> delays, forecasts built from orders, lot sizes, over-reaction, and shortage gaming. Experiments (Sterman, 1989) show that even careful people misjudge the feedback from their own orders.",
+    "<b>Fix information first.</b> Plan from real sell-through, then shorten delays and lots and smooth your forecasts. Extra safety stock does not cure swings; in this model it made them bigger.",
+    "<b>In a shortage, do not join the wave.</b> Allocate by past sales, check orders against sell-through, and do not double-order components: that is how a shortage turns into a glut.",
+  ],
+});
+</script>
+</body>
+</html>

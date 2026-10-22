@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Curse of Knowledge Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab } from "../kit/lab.js";
+
+/* MODEL-START
+   Illustrative model, not a measurement. Each person holds the message with a "recall" that
+   decays between tellings (Ebbinghaus-style forgetting) and rebuilds at every telling.
+   Every repeat also makes the memory last longer (spacing effect). Distance = how far a listener's
+   background is from yours. Only the shape is evidence-based; the sizes are stylised. */
+const DAYS = 28, PEOPLE = 18;
+const MSG = [
+  { enc: 0.50, S0: 16, ap: 0.50 }, // detailed deck
+  { enc: 0.60, S0: 19, ap: 0.55 }, // one-page memo
+  { enc: 0.70, S0: 22, ap: 0.75 }, // one sentence with concrete examples
+];
+const reach = (ch) => 1 - Math.pow(0.2, ch);      // share of people who take in a telling, by channels used
+const recall = (dt, S) => Math.exp(-dt / S);       // forgetting between tellings
+function events(p) {
+  const m = MSG[p.message], close = 1 - p.distance, ev = [];
+  for (let i = 0; i < p.reps; i++) ev.push({ t: (i * DAYS) / p.reps, gain: reach(p.channels) * m.enc * close, boost: i ? 1.8 : 1 });
+  if (p.tied) for (const t of [2, 9, 16, 23]) ev.push({ t, gain: 0.8 * 0.5 * close, boost: 1.8 });
+  if (p.doc) ev.push({ t: 3, gain: 0.6 * 0.12 * close, boost: 1 });
+  return ev.sort((a, b) => a.t - b.t);
+}
+function stateAt(p, T) { // share who can state the strategy on day T
+  let u = 0, S = MSG[p.message].S0, last = 0, first = true;
+  for (const e of events(p)) {
+    if (e.t > T) break;
+    u *= recall(e.t - last, S); last = e.t;
+    u += (1 - u) * e.gain;
+    if (!first) S *= e.boost;
+    first = false;
+  }
+  return u * recall(T - last, S);
+}
+const applyOf = (p) => Math.min(0.95, MSG[p.message].ap + (p.tied ? 0.2 : 0));
+const shareAt = (p, T) => stateAt(p, T) * applyOf(p);
+function beliefOf(p) { // what you would guess: everyone who heard it got it; real cases show you the truth
+  const heard = 1 - Math.pow(1 - reach(p.channels), p.reps);
+  return p.tied ? Math.min(1, shareAt(p, DAYS) * 1.1) : 0.5 + 0.3 * heard;
+}
+function model(p) {
+  const state = stateAt(p, DAYS), share = shareAt(p, DAYS), belief = beliefOf(p);
+  const n = (x) => Math.round(x * PEOPLE);
+  return {
+    values: { share: share * 100, state: state * 100, belief: belief * 100, gap: belief / share },
+    caption: `After 4 weeks about ${n(share)} of ${PEOPLE} people can state the strategy and apply it. You would guess ${n(belief)}.`,
+  };
+}
+/* MODEL-END */
+
+/* ---------- The tower: pulses go out, people understand (steady glow) or forget (fade) ---------- */
+function scene(k) {
+  const { THREE, box, cyl, sphere, mats, glow, remove } = k;
+  const TX = -11, LOOP = 14; // one 28-day month plays in 14 seconds
+  box(2.4, 0.8, 2.4, mats.dark, TX, 0, 0);
+  cyl(0.3, 6, mats.steel, TX, 0.8, 0);
+  const beacon = sphere(0.55, glow(2.5), TX, 7.3, 0);
+  let antennas = [], pulses = [], P = null, prevDay = 0;
+  const lights = [], marks = [];
+  for (let i = 0; i < PEOPLE; i++) { // 15 engineers in a grid, 3 sales people further out
+    const sales = i >= 15, x = sales ? 14 : -1 + Math.floor(i / 5) * 3.2, z = sales ? (i - 16) * 3.4 : ((i % 5) - 2) * 3.2;
+    box(0.9, 0.5, 0.9, mats.dark, x, 0, z);
+    lights.push({ x, z, v: 0.15, mesh: sphere(0.34, glow(0.15), x, 1.15, z) });
+    marks.push(sphere(0.16, mats.cool, x, 2.5, z));
+  }
+  const colors = [0x7d8794, 0xb8893f, 0xffd27a];
+  function antennaSet(n) {
+    antennas.forEach((a) => remove(a)); antennas = [];
+    for (let i = 0; i < n; i++) antennas.push(cyl(0.07, 2 + i * 0.4, mats.brass, TX + (i - (n - 1) / 2) * 0.55, 6.8, 0));
+  }
+  function fire(p) {
+    const m = new THREE.Mesh(new THREE.RingGeometry(0.92, 1, 64), new THREE.MeshBasicMaterial({ color: colors[p.message], transparent: true, opacity: 0.25 + 0.25 * p.message, side: THREE.DoubleSide }));
+    m.rotation.x = -Math.PI / 2; m.position.set(TX, 0.6, 0); k.scene.add(m);
+    pulses.push({ m, r: 1 });
+  }
+  k.onTick((dt, t) => {
+    if (!P) return;
+    const day = ((t % LOOP) / LOOP) * DAYS;
+    for (let i = 0; i < P.reps; i++) {
+      const s = (i * DAYS) / P.reps;
+      if ((s > prevDay && s <= day) || (s === 0 && day < prevDay)) fire(P);
+    }
+    prevDay = day;
+    pulses = pulses.filter((q) => {
+      q.r += dt * 18; q.m.scale.set(q.r, q.r, 1); q.m.material.opacity *= Math.pow(0.55, dt);
+      lights.forEach((l) => { const d = Math.hypot(l.x - TX, l.z); if (d > q.r - 0.9 && d < q.r + 0.9 && Math.random() < reach(P.channels)) l.v = Math.max(l.v, 0.6 + P.message * 0.7); });
+      if (q.r > 34) { remove(q.m); return false; }
+      return true;
+    });
+    const share = shareAt(P, day);
+    lights.forEach((l, i) => {
+      const on = (i + 0.5) / PEOPLE < share, tgt = on ? 2.6 : 0.12;
+      l.v += (tgt - l.v) * Math.min(1, dt * (on ? 4 : 2.5));
+      l.mesh.material.emissiveIntensity = l.v;
+    });
+    beacon.material.emissiveIntensity = 1.6 + Math.sin(t * 6) * 0.8;
+    const b = Math.round(beliefOf(P) * PEOPLE);
+    marks.forEach((m, i) => { m.visible = i < b; });
+    k.hud.innerHTML = `<span>Day <b>${Math.floor(day)}</b> of 28</span><span>Can apply it <b>${Math.round(share * PEOPLE)}</b> of ${PEOPLE}</span><span>You think <b>${b}</b> of ${PEOPLE}</span>`;
+  });
+  return { update(p) { P = p; antennaSet(p.channels); } };
+}
+
+const pct = (v) => (Number.isFinite(v) ? (v < 10 ? v.toFixed(1) : v.toFixed(0)) : "–");
+createLab({
+  id: "L18",
+  area: "Communicating strategy",
+  title: "The curse of knowledge",
+  goal: "Decide <b>how to get a strategy into 18 people's daily decisions</b>: which format, how often, and how to check that it landed, knowing that your own sense of clarity is a poor guide.",
+  story: "It is early 2027. Your venture-scale hardware company has <b>15 engineers and 3 sales people</b>. This year's strategy: <i>win and keep three paid pilot customers, and build only what helps that</i>. You have lived inside this for months, so it feels obvious. Everyone must make daily calls that fit it: which request to take, what to demo, what to say no to. Your job is to get it into their heads and keep it there for a month. In the scene, a glowing person has it and can apply it; a dim one has lost it; the blue dots above are how many you would guess have it.",
+  params: [
+    { key: "message", label: "What you give them", options: [{ value: 0, label: "40-slide deck" }, { value: 1, label: "One-page memo" }, { value: 2, label: "One sentence + real examples" }], value: 0 },
+    { key: "reps", label: "Times you tell it in 4 weeks", min: 1, max: 12, step: 1, value: 1, format: (v) => `${v}×` },
+    { key: "channels", label: "Channels used each time", min: 1, max: 4, step: 1, value: 1, format: (v) => `${v}`, hint: "All-hands, team chat, 1:1s, written notes" },
+    { key: "tied", label: "Tied to real decisions", options: [{ value: 0, label: "No" }, { value: 1, label: "Weekly: decide a live case with it" }], value: 0 },
+    { key: "doc", label: "Long document on top", options: [{ value: 0, label: "No" }, { value: 1, label: "Send it once" }], value: 0 },
+    { key: "distance", label: "How far listeners' background is from yours", options: [{ value: 0.05, label: "Close (helped build it)" }, { value: 0.3, label: "Typical engineer" }, { value: 0.75, label: "Far (sales)" }], value: 0.3 },
+  ],
+  metrics: [
+    { key: "share", label: "Can state it and apply it", unit: "%", format: (v) => pct(v) },
+    { key: "state", label: "Can state it", unit: "%", format: (v) => pct(v) },
+    { key: "belief", label: "You would guess", unit: "%", format: (v) => pct(v) },
+    { key: "gap", label: "Your guess vs reality", unit: "× too high", format: (v) => (v < 10 ? v.toFixed(1) : v.toFixed(0)) },
+  ],
+  model,
+  chart: {
+    title: "Who still has it, over 4 weeks",
+    xLabel: "days since launch", yLabel: "can state it and apply it (%)",
+    xMin: 0, xMax: 28, yMin: 0, yMax: 100,
+    xFormat: (v) => `${Math.round(v)}`,
+    series(p) {
+      const pts = [], ref = [], q = { ...p, message: 0, reps: 1, channels: 1, tied: 0, doc: 0 };
+      for (let d = 0; d <= DAYS; d += 0.5) { pts.push([d, shareAt(p, d) * 100]); ref.push([d, shareAt(q, d) * 100]); }
+      const b = beliefOf(p) * 100;
+      return [
+        { name: "this plan", color: "brass", points: pts },
+        { name: "what you would guess", color: "cool", dashed: true, points: [[0, b], [DAYS, b]] },
+        { name: "deck told once", color: "dim", dashed: true, points: ref },
+      ];
+    },
+    marker: (p, r) => [DAYS, r.values.share],
+    note: "Illustrative model: shares and speeds are stylised, not measured. What it rests on: people forget fast after one telling (Ebbinghaus, replicated by Murre and Dros 2015), repeats make memory last longer, and concrete messages stick better (Heath and Heath). One tapping study found about 1 listener in 40 right where tappers expected 1 in 2 (Newton 1990, via secondary sources). The model is tuned so a deck told once ends at a single-digit share. Trust the shape of the curve, not the exact percentages.",
+  },
+  stage: { floor: [34, 22], view: 22, target: [0, 0, 0] },
+  scene,
+  tests: [
+    {
+      title: "Test 1. The launch",
+      situation: "On Monday you present this year's strategy to all 18 people. You have a thorough 40-slide deck covering markets, pilots, roadmap and priorities. <b>Today's plan: present the deck once at the all-hands.</b> Which launch gets the most people to apply the strategy four weeks later?",
+      baseline: {},
+      options: [
+        { id: "A", label: "The 40-slide deck, once", detail: "All-hands only. Complete and detailed.", params: { message: 0, reps: 1, channels: 1 } },
+        { id: "B", label: "A one-page memo, once", detail: "Emailed after the all-hands.", params: { message: 1, reps: 1, channels: 1 } },
+        { id: "C", label: "One sentence, every week, with a real example", detail: "All-hands plus team chat, 4 weeks in a row", params: { message: 2, reps: 4, channels: 2 } },
+        { id: "D", label: "The deck, then sent again in week 2", detail: "All-hands plus email, twice", params: { message: 0, reps: 2, channels: 2 } },
+      ],
+      rankBy: "share", better: "higher",
+      learning: "<p><b>C wins by a wide margin.</b> After four weeks the deck told once leaves about 2% of the team able to state and apply it (under one person in 18). The memo gets about 4% (1.7×). Sending the deck twice through two channels reaches about 13% (5×). One sentence with a real example, repeated weekly in two channels, reaches about 59% (24×).</p><p><b>Your instinct (more detail is better) is the worst option.</b> The deck feels complete to you because you know the context; the listener has none, so most of it never sticks. Repeating helps more than polishing: the deck told weekly in two channels would still reach about 31%. Concreteness and repetition multiply.</p><p><b>Rule of thumb:</b> a strategy should fit in one sentence, come with a real example, and be said many times in many places. Kotter's guess is that leaders under-communicate by a factor of 10 or more.</p>",
+    },
+    {
+      title: "Test 2. Whom do you overestimate?",
+      size: false, // "how big an effect" makes no sense for "where is the gap largest"
+      situation: "You gave the all-hands deck last month. When you ask \"does everyone get the strategy?\" nobody objects, and you feel about <b>three quarters</b> of the team have it. The gap between what you believe and what is true is not equal everywhere. <b>Where is your gut furthest from reality?</b>",
+      baseline: {},
+      options: [
+        { id: "A", label: "The 3 engineers who helped shape it", detail: "They sat in the strategy discussions", params: { distance: 0.05 } },
+        { id: "B", label: "The other 12 engineers", detail: "Typical background", params: { distance: 0.3 } },
+        { id: "C", label: "The 3 sales people", detail: "Customer-side, far from the technical debate", params: { distance: 0.75 } },
+      ],
+      rankBy: "gap", better: "higher",
+      question: "Your call: where is your estimate furthest from the truth?",
+      learning: "<p><b>C: the sales people.</b> Everywhere you guess about 74%, because you judge by what you would understand. The truth after a month: about 3% among the engineers who built it, 2% for the typical engineer, under 1% for sales. Your guess is about 22× too high for the first group, 30× for the second and 85× for sales (2.8× worse than for the typical engineer).</p><p><b>Two lessons.</b> The further a listener's background is from yours, the less lands, and the more you overestimate. And even your closest colleagues do not hold it after a single telling. Camerer, Loewenstein and Weber (1989) showed that informed people cannot ignore what they know when they judge others; Newton's tappers expected half the listeners to name the song, and about 1 in 40 did.</p><p><b>Rule of thumb:</b> never trust \"it sounds clear to me\" or a silent room. Measure the group furthest from you, by asking them to use it.</p>",
+    },
+    {
+      title: "Test 3. The next step",
+      situation: "You launched well: the sentence, with an example, said once at the all-hands and posted in the team chat. People nodded. <b>What do you do next?</b> (Today: nothing more is planned.)",
+      baseline: { message: 2, channels: 2, reps: 1 },
+      options: [
+        { id: "A", label: "Repeat it every week", detail: "Same sentence, new example each time", params: { reps: 4 } },
+        { id: "B", label: "Test it on real cases", detail: "Each week, ask people to decide a live case with it", params: { tied: 1 } },
+        { id: "C", label: "Send the long strategy document", detail: "So nobody can say they lacked detail", params: { doc: 1 } },
+        { id: "D", label: "Nothing: it was clear", detail: "Check again in a month", params: {} },
+      ],
+      rankBy: "share", better: "higher",
+      learning: "<p><b>B edges A; C does nothing.</b> Said once, the sentence reaches about 10% after four weeks. Repeating it weekly lifts that to about 59% (6×). Asking people to decide a live case with it lifts it to about 70% (7×): every case makes people recall it and use it, and it shows you who is lost, so your guess lands within a few points of the truth (77% against 70%). The long document moves almost nothing (about 1.1×), and doing nothing leaves you where you started.</p><p><b>Rule of thumb:</b> after the launch, tie the strategy to real decisions: it repeats the message, trains application, and replaces your guess with data. Repetition alone is a close second; extra detail is the weakest move.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>You overestimate how well your message lands.</b> Knowing the context makes it hard to imagine not having it. After one detailed telling, a team may keep single digits while you guess three quarters.",
+    "<b>Concrete and repeated beats complete.</b> One sentence plus a real example, said weekly in several channels, can work about 24× better than one detailed deck. Kotter's rule of thumb: leaders undercommunicate by 10× or more.",
+    "<b>Distance widens the gap.</b> The further a listener is from your background (sales, new hires), the less lands and the more you overestimate. Check the furthest group first.",
+    "<b>Tie it to real decisions.</b> Ask people to decide live cases with the strategy: it repeats it, trains use, and shows you the truth. A long document adds almost nothing.",
+  ],
+});
+</script>
+</body>
+</html>

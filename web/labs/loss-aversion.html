@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Loss Aversion Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* MODEL START */
+/* Illustrative prospect-theory model. All money is in thousands of euros (k€).
+   Value of a gain x:  x^0.88.  Value of a loss x:  -L * x^0.88  (L = how much more a loss hurts; 2.25 in Tversky & Kahneman 1992).
+   Probabilities are weighted as in the 1992 paper (gamma 0.61 for gains, delta 0.69 for losses).
+   The yes/no link, the churn constant and the list-price credibility are ASSUMED, not measured. */
+const ALPHA = 0.88, GAMMA = 0.61, DELTA = 0.69;
+const CRED = 0.3;      // assumed: how much a never-paid list price moves a customer who already uses the product
+const SOFT = 2.5;      // assumed: spread of the yes/no choice, in units of felt value
+const CHURN = 0.016;   // assumed: share of customers lost per unit of felt pain
+const PILOTS = 40, BASE = 100;     // 40 pilot customers; 100 paying customers at 1k€ a month
+const PER_PCT = 0.12;  // a 1% rise on 12k€ a year is 0.12k€ a year
+const SALVAGE = 200, CONT_COST = 1000, CONT_PAY = 3200, PIV_COST = 400, PIV_PAY = 1400;
+
+const G = (x) => Math.pow(Math.max(x, 0), ALPHA);
+const wPlus = (q) => { q = Math.min(1, Math.max(0, q)); return Math.pow(q, GAMMA) / Math.pow(Math.pow(q, GAMMA) + Math.pow(1 - q, GAMMA), 1 / GAMMA); };
+const wMinus = (q) => { q = Math.min(1, Math.max(0, q)); return Math.pow(q, DELTA) / Math.pow(Math.pow(q, DELTA) + Math.pow(1 - q, DELTA), 1 / DELTA); };
+
+// Felt gain and felt loss of a list of {x, p} outcomes (cumulative prospect theory, rank-dependent weights).
+function prospect(outs, L) {
+  let gain = 0, loss = 0, c = 0;
+  for (const o of outs.filter((o) => o.x >= 0).sort((a, b) => b.x - a.x)) { const n = c + o.p; gain += (wPlus(n) - wPlus(c)) * G(o.x); c = n; }
+  c = 0;
+  for (const o of outs.filter((o) => o.x < 0).sort((a, b) => a.x - b.x)) { const n = c + o.p; loss += (wMinus(n) - wMinus(c)) * L * G(-o.x); c = n; }
+  return { gain, loss };
+}
+
+function model(p) {
+  const L = p.loss;
+  const out = { gain: 0, loss: 0, accept: NaN, lost: NaN, revenue: NaN, next: NaN, hit: 0, mark: 0, text: "" };
+  let caption = "";
+  if (p.case === 1) {
+    const S = p.savings, P = p.price;
+    if (p.frame === "plain") { out.gain = G(S); out.loss = L * G(P); }
+    else if (p.frame === "save") { const n = S - P; out.gain = n > 0 ? G(n) : 0; out.loss = n < 0 ? L * G(-n) : 0; }
+    else if (p.frame === "lose") { out.gain = L * G(S); out.loss = L * G(P); }
+    else { out.gain = G(S) + CRED * G(0.75 * P); out.loss = L * G(P); }
+    out.accept = 1 / (1 + Math.exp(-(out.gain - out.loss) / SOFT));
+    out.revenue = out.accept * PILOTS * P;
+    out.hit = out.accept; out.mark = -P;
+    out.text = `Pilot customers saying yes <b>${Math.round(out.accept * 100)}%</b>`;
+    caption = `Same price, same product, different wording: ${Math.round(out.accept * PILOTS)} of ${PILOTS} pilot customers sign, worth ${fmt(out.revenue, 0)}k€ a year.`;
+  } else if (p.case === 2) {
+    const steps = p.premium ? 1 : p.steps;
+    const per = p.premium ? 2 : p.rise / p.steps;        // premium tier: a small felt loss, "my plan now looks plain" (assumed)
+    const pain = L * G(per * PER_PCT);
+    const each = Math.min(0.5, CHURN * pain);
+    const lost = 1 - Math.pow(1 - each, steps);
+    const uplift = p.premium ? 0.25 * 4 * p.rise / 100 : Math.pow(1 + per / 100, steps) - 1;
+    out.gain = G(p.savings); out.loss = pain * steps;
+    out.lost = lost * BASE; out.revenue = BASE * (1 - lost) * (1 + uplift) * 12;
+    out.hit = 1 - lost; out.mark = -per * PER_PCT;
+    out.text = `Customers staying <b>${(100 - out.lost).toFixed(1)}</b> of 100`;
+    caption = `${p.premium ? "New premium tier, old price kept" : steps === 1 ? `One ${p.rise}% rise` : `${steps} rises of ${fmt(per, 1)}%`}: ${out.lost.toFixed(1)} of 100 customers leave, yearly revenue ${fmt(out.revenue, 0)}k€.`;
+  } else {
+    const S = p.sunk;
+    let outs, chance;
+    if (p.choice === "continue") { chance = p.contP; outs = [{ x: -S - CONT_COST + CONT_PAY, p: chance }, { x: -S - CONT_COST, p: 1 - chance }]; out.next = -CONT_COST + chance * CONT_PAY; }
+    else if (p.choice === "pivot") { chance = p.pivP; outs = [{ x: -S - PIV_COST + PIV_PAY, p: chance }, { x: -S - PIV_COST, p: 1 - chance }]; out.next = -PIV_COST + chance * PIV_PAY; }
+    else { chance = 1; outs = [{ x: SALVAGE - S, p: 1 }]; out.next = SALVAGE; }
+    const f = prospect(outs, L);
+    out.gain = f.gain; out.loss = f.loss; out.hit = chance; out.mark = -S;
+    out.text = p.choice === "kill" ? `Salvage is certain: <b>${SALVAGE}k€</b>` : `Chance the next step pays <b>${Math.round(chance * 100)}%</b>`;
+    caption = `${{ continue: "Continue", pivot: "Pivot", kill: "Kill" }[p.choice]}: from here on the cash is ${out.next >= 0 ? "+" : "−"}${fmt(Math.abs(out.next), 0)}k€; with ${fmt(S, 0)}k€ already spent, it feels like ${fmt(out.gain - out.loss, 0)} on the gut scale.`;
+  }
+  const tot = out.gain + out.loss || 1;
+  return { values: { accept: out.accept * 100, lost: out.lost, revenue: out.revenue, next: out.next, feel: out.gain - out.loss,
+    sg: out.gain / tot, sl: out.loss / tot, hit: out.hit, mark: out.mark }, caption, text: out.text };
+}
+/* MODEL END */
+
+/* ---------- The filter bench: an amber beam for gains, a red beam for losses, customers' lights at the end ---------- */
+function scene(k) {
+  const { THREE, box, cyl, mats, glow } = k;
+  box(3, 2.2, 6, mats.dark, -13, 0, 0);                       // the offer, the source
+  const amber = glow(1), red = mats.jam.clone();
+  const gainBeam = box(20, 0.6, 0.6, amber, -1.5, 1.4, -2.2), lossBeam = box(20, 0.6, 0.6, red, -1.5, 1.4, 2.2);
+  const paneMat = new THREE.MeshStandardMaterial({ color: 0x7fb3d6, transparent: true, opacity: 0.4, roughness: 0.2 });
+  const panes = [-7, -2, 3].map((x) => { const m = new THREE.Mesh(new THREE.BoxGeometry(0.3, 4.4, 8.4), paneMat); m.position.set(x, 2.2, 0); k.scene.add(m); return m; });
+  [-7, -2, 3].forEach((x) => { box(0.5, 0.3, 9, mats.steel, x, 0, 0); });
+  const lamps = [];
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 5; r++) lamps.push(cyl(0.5, 0.7, mats.dark, 9.5 + c * 1.5, 0, -3.8 + r * 1.9));
+  box(7, 0.2, 11, mats.belt, 11.2, 0, 0);
+  const lit = glow(3);
+  let st = { sg: 0.5, sl: 0.5, loss: 2.25 };
+  k.onTick((dt, t) => {
+    const pulse = 0.92 + 0.08 * Math.sin(t * 3);
+    amber.emissiveIntensity = (0.15 + 1.6 * st.sg) * pulse; red.emissiveIntensity = (0.15 + 1.6 * st.sl) * pulse;
+    gainBeam.scale.set(1, 0.3 + 1.7 * st.sg, 0.3 + 1.7 * st.sg); lossBeam.scale.set(1, 0.3 + 1.7 * st.sl, 0.3 + 1.7 * st.sl);
+    panes[1].scale.x = 0.6 + st.loss * 0.9;              // the middle filter is the loss lens: thicker when losses weigh more
+  });
+  return {
+    update(p, r) {
+      st = { sg: r.values.sg, sl: r.values.sl, loss: p.loss };
+      const n = Math.round(r.values.hit * lamps.length);
+      lamps.forEach((l, i) => { l.material = i < n ? lit : mats.dark; });
+      k.hud.innerHTML = `<span>Gain beam <b>${Math.round(r.values.sg * 100)}%</b></span><span>Loss beam <b>${Math.round(r.values.sl * 100)}%</b></span><span>${r.text}</span>`;
+    },
+  };
+}
+
+let chartR = 4; // scale of the chart's x axis for the case on screen
+
+const lab = createLab({
+  id: "L17",
+  area: "Behavioural economics",
+  title: "Loss aversion",
+  goal: "Decide <b>how to word an offer, how to raise a price, and when to stop a failing project</b>, knowing that people weigh a loss about twice as much as an equal gain.",
+  story: "It is 2027 and you are founding a venture-scale hardware company. You have <b>40 pilot customers</b> whose free trial is ending; each saves about <b>€3,000 a year</b> and you want <b>€2,000 a year</b>. Later you will have <b>100 paying customers at €1,000 a month</b>. And your first product line has absorbed <b>€2M</b> of grants and seed money and is behind. Three calls: how to ask, how to raise, when to stop.",
+  params: [
+    { key: "case", label: "What you are deciding", options: [{ value: 1, label: "Pilot offer" }, { value: 2, label: "Price rise" }, { value: 3, label: "Failing product line" }], value: 1 },
+    { key: "loss", label: "How much more a loss hurts than an equal gain", min: 1, max: 3, step: 0.25, value: 2.25, format: (v) => `${fmt(v, 2)}×`, hint: "Loss-aversion coefficient; 2.25 is the Tversky & Kahneman (1992) estimate" },
+    { key: "frame", label: "Offer wording (pilot)", options: [{ value: "plain", label: "Pay €2,000" }, { value: "save", label: "Save €3,000" }, { value: "lose", label: "You lose the saving" }, { value: "discount", label: "Discount off list" }], value: "plain" },
+    { key: "price", label: "Pilot price per year (k€)", min: 0.5, max: 4, step: 0.25, value: 2, format: (v) => `${fmt(v, 2)}k€` },
+    { key: "savings", label: "Customer's saving per year (k€)", min: 1, max: 6, step: 0.5, value: 3, format: (v) => `${fmt(v, 1)}k€` },
+    { key: "rise", label: "Revenue you want from the rise (%)", min: 2, max: 20, step: 1, value: 10, format: (v) => `${v}%` },
+    { key: "steps", label: "Rise in how many steps (price rise)", options: [{ value: 1, label: "One step" }, { value: 2, label: "Two steps" }], value: 1 },
+    { key: "premium", label: "Raise through (price rise)", options: [{ value: 0, label: "Rise the price" }, { value: 1, label: "New premium tier" }], value: 0 },
+    { key: "choice", label: "Your move (product line)", options: [{ value: "continue", label: "Continue" }, { value: "pivot", label: "Pivot" }, { value: "kill", label: "Kill" }], value: "continue" },
+    { key: "sunk", label: "Already spent (k€)", min: 0, max: 4000, step: 250, value: 2000, format: (v) => `${fmt(v, 0)}k€`, hint: "Moves how it feels. Never moves what happens next." },
+    { key: "contP", label: "Chance the current line works", min: 0.1, max: 0.6, step: 0.05, value: 0.3, format: (v) => `${Math.round(v * 100)}%` },
+    { key: "pivP", label: "Chance the pivot works", min: 0.1, max: 0.8, step: 0.05, value: 0.5, format: (v) => `${Math.round(v * 100)}%` },
+  ],
+  metrics: [
+    { key: "accept", label: "Pilots saying yes", unit: "%", format: (v) => (Number.isFinite(v) ? v.toFixed(0) : "–") },
+    { key: "lost", label: "Customers lost", unit: "of 100", format: (v) => (Number.isFinite(v) ? v.toFixed(1) : "–") },
+    { key: "revenue", label: "Yearly revenue", unit: "k€", format: (v) => (Number.isFinite(v) ? fmt(v, 0) : "–") },
+    { key: "next", label: "Cash from here on", unit: "k€", format: (v) => (Number.isFinite(v) ? fmt(v, 0) : "–") },
+    { key: "feel", label: "How it feels (index)", format: (v) => fmt(v, Math.abs(v) >= 100 ? 0 : 1) },
+  ],
+  model,
+  chart: {
+    title: "How a gain and a loss feel",
+    xLabel: "outcome vs your reference point (share of the biggest amount in the case)", yLabel: "how it feels (same scale)",
+    xMin: -1, xMax: 1, yMin: -3, yMax: 1.2,
+    xFormat: (v) => `${v > 0 ? "+" : ""}${Math.round(v * 100)}%`,
+    series(p) {
+      chartR = p.case === 1 ? Math.max(4, p.price * 1.2, p.savings * 1.2) : p.case === 2 ? 2 : Math.max(3000, p.sunk * 1.2);
+      const v = (x) => (x >= 0 ? G(x) : -p.loss * G(-x));
+      const pts = [];
+      for (let i = -40; i <= 40; i++) pts.push([i / 40, v((i / 40) * chartR) / chartR]);
+      return [
+        { name: "how it feels (prospect-theory curve)", color: "brass", points: pts },
+        { name: "plain money (what it is worth)", color: "dim", dashed: true, points: [[-1, -1], [1, 1]] },
+      ];
+    },
+    marker(p, r) { const x = r.values.mark; return [Math.max(-1, x / chartR), (x >= 0 ? G(x) : -p.loss * G(-x)) / chartR]; },
+    note: "Illustrative model: the curve is the 1992 prospect-theory value function (gains x^0.88, losses -2.25 x^0.88, shown as a share of the amount at stake). The ring marks the loss at the heart of the case. The mapping from felt value to customers who say yes or leave, the churn rate and the list-price credibility are assumed, not measured. They rank the options; they do not predict your conversion. Real framing effects are usually smaller than this model shows.",
+  },
+  stage: { floor: [34, 22], view: 21 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. The pilot offer",
+      situation: "Your <b>40 pilot customers</b> have used the product free for three months. Each saves about <b>€3,000 a year</b>, and the pilot will cost <b>€2,000 a year</b>. Price and product are fixed; only the wording of the offer letter changes.",
+      baseline: { case: 1, frame: "plain", price: 2, savings: 3 },
+      options: [
+        { id: "A", label: "\"Pay €2,000 for the pilot\"", detail: "Today's draft: a price, then the benefits", params: { frame: "plain" } },
+        { id: "B", label: "\"Save €3,000 a year\"", detail: "Lead with the saving; the €2,000 is the cost of getting it", params: { frame: "save" } },
+        { id: "C", label: "\"You lose the €3,000 saving if you stop\"", detail: "They already use it; stopping takes the saving away", params: { frame: "lose" } },
+        { id: "D", label: "\"50% off the €3,500 list price\"", detail: "A discount off a higher list price (they have never paid €3,500)", params: { frame: "discount" } },
+      ],
+      rankBy: "accept", better: "higher",
+      question: "Your call: which wording converts the most pilot customers?",
+      learning: "<p><b>“You lose the saving” wins, and the discount does not.</b> About 67 of 100 pilots sign with the loss wording (C), against 35 with the plain price (A): roughly 1.9×, or about €54k a year from the 40 pilots against €28k. Leading with the saving (B) gets about 60 (1.7×). The discount off a list price they never paid (D) gets about 39, barely better than the plain price (1.1×).</p><p><b>Why:</b> after three months of free use the customer's reference point is “I have it”. Stopping is a loss of €3,000 a year, and a loss weighs about 2.25 times an equal gain, so it outweighs the €2,000 price. The discount tries to move the reference to a €3,500 list price, but this customer has never paid it, so it moves little. Set the loss weight to 1× in free play and A and C become identical.</p><p><b>Rule of thumb:</b> frame the offer from where the customer already stands. For someone who already has the thing, the pain of losing it does the selling, as long as it is true and not a threat. Real framing effects are smaller than this model shows.</p>",
+    },
+    {
+      title: "Test 2. Raising the price",
+      situation: "You now have <b>100 paying customers at €1,000 a month</b> (€1.2M a year). You need about <b>10% more revenue</b> next year. All three routes below are built to add about 10%; they differ in how many customers leave.",
+      baseline: { case: 2, rise: 10, steps: 1, premium: 0 },
+      options: [
+        { id: "A", label: "One 10% rise at the next renewal", detail: "Simple, one conversation", params: { steps: 1, premium: 0 } },
+        { id: "B", label: "Two 5% rises, six months apart", detail: "Gentler slices", params: { steps: 2, premium: 0 } },
+        { id: "C", label: "New premium tier, old price kept", detail: "Premium at +40%; about a quarter upgrade", params: { premium: 1 } },
+      ],
+      rankBy: "lost", better: "lower",
+      question: "Your call: which way loses the fewest customers for the same extra revenue?",
+      learning: "<p><b>Do not create the loss.</b> A new premium tier (C) leaves existing customers on today's price: about 1.0 customer in 100 leaves, against 4.2 for one 10% rise (A). That is roughly 4× fewer for about the same extra revenue (€1.31M a year against €1.26M). Splitting the rise into two 5% slices (B) loses 4.5 of 100, slightly worse than one rise, because each slice is a fresh loss from a reset reference price. The gentle-looking option is the instinct, and it barely helps.</p><p><b>Rule of thumb:</b> every price rise is a loss measured from the old price. Prefer routes that give customers a choice and a gain (a tier they can step up to) over routes that take from them. The gap between A and B is small and rests on the model's assumptions, so treat that order as uncertain; the gap to C is the lesson. Caveat: if the premium tier works by stripping features from the base plan, it becomes a loss again.</p>",
+    },
+    {
+      title: "Test 3. The €2M product line",
+      situation: "Product line 1 has absorbed <b>€2M</b> of grants and seed money and is behind schedule. Judge each move <b>only on what happens from here on</b>: the €2M is gone whatever you choose.",
+      baseline: { case: 3, choice: "continue", sunk: 2000, contP: 0.3, pivP: 0.5 },
+      options: [
+        { id: "A", label: "Continue", detail: "€1.0M more; 30% chance it works and brings €3.2M", params: { choice: "continue" } },
+        { id: "B", label: "Pivot", detail: "€0.4M to reuse the sensors for another customer group; 50% chance of €1.4M", params: { choice: "pivot" } },
+        { id: "C", label: "Kill", detail: "Stop now, sell what can be sold for €0.2M, move the engineers to the other line", params: { choice: "kill" } },
+      ],
+      rankBy: "next", better: "higher", size: false,
+      question: "Your call: which move leaves the company with the most cash from here on?",
+      learning: "<p><b>Pivot is best, kill is second, and continuing is the worst on the cash.</b> From here on: pivot +€300k (spend 400, then a 50% chance of 1,400), kill +€200k (the salvage), continue −€40k (spend 1,000, then a 30% chance of 3,200). Continuing needs a 38% chance of working just to match killing; you have 30%. The €2M appears in none of these numbers: it is gone either way.</p><p><b>The gut says something else.</b> With the €2M counted as a loss that stopping makes real, the gut ranks continue (−1,484 on the page's scale) just ahead of pivot (−1,500) and well ahead of kill (−1,647): killing locks in a loss of 1.8M, while a gamble keeps a chance of getting back to zero. Set “already spent” to 0 in free play and kill becomes the best-feeling option. Only the sunk money changed.</p><p><b>Rule of thumb:</b> judge each option as if you had inherited the project today with no past spending. If the answer changes when you add the past spend, that is the bias. The pivot wins here only because its own numbers are good: at a 35% chance it falls to +€90k and kill wins.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Losses weigh about twice as much as equal gains,</b> measured from a reference point. The 1992 estimate is 2.25; later pooled estimates are a little lower.", "<b>The wording sets the reference point.</b> A customer who already has the product responds most to what they lose by stopping. A discount off a price they never paid moves little.", "<b>Every price rise is a loss from the old price.</b> Offer a tier customers can step up to rather than taking from them. Slicing one rise into two helps little.", "<b>Sunk costs are gone.</b> Judge each option only on what happens next. If the money already spent changes your answer, that is the bias, and it is how founders cling to losing bets.",
+  ],
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Winner's Curse Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model: a sealed-bid auction for something whose value nobody knows exactly ---------- */
+const FAIR = 10;            // EUR million: what the firm is worth to a typical buyer (nobody knows it exactly)
+const PT = FAIR / 100;      // EUR million per point of value
+const SQ2PI = Math.sqrt(2 * Math.PI);
+const phi = (z) => Math.exp(-z * z / 2) / SQ2PI;
+function Phi(z) { // standard normal CDF (Abramowitz-Stegun 26.2.17, error < 1e-7)
+  const t = 1 / (1 + 0.2316419 * Math.abs(z));
+  const p = phi(z) * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return z > 0 ? 1 - p : p;
+}
+const SIMP = 240, LO = -5, HI = 5, STEP = (HI - LO) / SIMP;
+const weight = (i) => (i === 0 || i === SIMP ? 1 : i % 2 ? 4 : 2) * STEP / 3;
+const maxCache = new Map();
+function expMax(n) { // expected highest of n standard-normal estimates
+  if (n <= 1) return 0;
+  if (maxCache.has(n)) return maxCache.get(n);
+  let s = 0;
+  for (let i = 0; i <= SIMP; i++) { const z = LO + i * STEP; s += weight(i) * z * n * phi(z) * Math.pow(Phi(z), n - 1); }
+  maxCache.set(n, s); return s;
+}
+
+function model(p) {
+  const sig = p.sigma / 100, r = p.rival / 100, g = 1 + p.edge / 100, h = p.haggle / 100;
+  if (p.role === 1) { // you SELL: price is the highest bid among n bidders
+    const price = (1 - r + h) * (1 + sig * expMax(p.n)) * FAIR;
+    const gain = price - FAIR;
+    return { values: { win: 100, price, ifwin: gain, ev: gain },
+      caption: `${p.n === 1 ? "One buyer" : p.n + " bidders"}, each guessing your firm's value within about ±${p.sigma}%: the best bid averages €${price.toFixed(2)}m against a fair value of €${FAIR}m (${gain >= 0 ? "+" : "−"}€${Math.abs(gain).toFixed(2)}m).` };
+  }
+  const d = p.shade / 100, sigMe = sig * p.myNoise;
+  let win = 0, ev = 0, paid = 0;
+  for (let i = 0; i <= SIMP; i++) {
+    const z = LO + i * STEP, f = weight(i) * phi(z);
+    const bid = (1 - d) * g * (1 + sigMe * z) * 100;                // points
+    const thr = ((1 - d) * g * (1 + sigMe * z) / (1 - r) - 1) / sig; // best rival estimate it must beat
+    const pw = Math.pow(Phi(Math.max(-9, Math.min(9, thr))), p.n - 1);
+    win += f * pw; ev += f * pw * (g * 100 - bid); paid += f * pw * bid;
+  }
+  const price = win > 1e-9 ? paid / win * PT : NaN, ifwin = win > 1e-9 ? ev / win * PT : NaN;
+  const worth = g * FAIR;
+  return { values: { win: win * 100, price, ifwin, ev: ev * PT },
+    caption: win < 0.0005 ? `With ${p.n} bidders and a ${p.shade}% shade you almost never win: the deal goes to someone else.`
+      : `With ${p.n} bidders you win ${(win * 100).toFixed(0)}% of auctions. When you do, you pay about €${price.toFixed(2)}m for something worth €${worth.toFixed(1)}m to you: ${ifwin >= 0 ? "a gain" : "a loss"} of €${Math.abs(ifwin).toFixed(2)}m.` };
+}
+const eur = (v) => (Number.isFinite(v) ? `€${v.toFixed(2)}m` : "–");
+const eurS = (v) => (Number.isFinite(v) ? `${v < 0 ? "−" : "+"}€${Math.abs(v).toFixed(2)}m` : "–");
+
+/* ---------- The dock: bidders are lights around the block; the tallest column wins ---------- */
+function scene(k) {
+  const { THREE, sphere, cyl, mats } = k;
+  const H = 0.045, RR = 6, COL = { rival: 0xffb547, you: 0x7fb3d6, bad: 0xe5573f, good: 0x59c98a };
+  cyl(2, 0.9, mats.dark, 0, 0, 0); cyl(1.4, 0.2, mats.brass, 0, 0.9, 0); // the auction block
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(RR, 0.05, 8, 96), mats.brass); // fair value of the firm
+  ring.rotation.x = Math.PI / 2; ring.position.y = 100 * H; k.scene.add(ring);
+  const colGeo = new THREE.BoxGeometry(1.1, 1, 1.1);
+  let seats = [], shape = "", P = null, round = null, tally = {};
+  const normal = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+
+  function build(p) {
+    seats.forEach((s) => { k.remove(s.col); k.remove(s.light); });
+    seats = [];
+    for (let i = 0; i < p.n; i++) {
+      const a = Math.PI / 4 + (i * 2 * Math.PI) / p.n, x = RR * Math.cos(a), z = RR * Math.sin(a);
+      const mat = new THREE.MeshStandardMaterial({ color: 0x2c333d, metalness: 0.6, roughness: 0.45, emissive: 0x000000 });
+      const lmat = new THREE.MeshStandardMaterial({ color: 0x1a1308, emissive: COL.rival, emissiveIntensity: 1.2 });
+      const col = new THREE.Mesh(colGeo, mat); col.castShadow = col.receiveShadow = true; col.position.set(x, 0.15, z); k.scene.add(col);
+      seats.push({ col, mat, lmat, light: sphere(0.35, lmat, x, 0.8, z), h: 0.3, target: 0.3, you: p.role === 0 && i === 0 });
+    }
+  }
+  function newRound() {
+    const sig = P.sigma / 100, r = P.rival / 100, g = 1 + P.edge / 100;
+    const bids = seats.map((s) => (s.you ? (1 - P.shade / 100) * g * (1 + sig * P.myNoise * normal()) : (1 - r + (P.role === 1 ? P.haggle / 100 : 0)) * (1 + sig * normal())) * 100);
+    let w = 0; bids.forEach((b, i) => { if (b > bids[w]) w = i; });
+    const worth = seats[w].you ? g * 100 : 100;
+    round = { t: 0, bids, w, worth, stage: 0 };
+    seats.forEach((s) => { s.target = 0.3; s.mat.emissive.setHex(0); s.lmat.emissive.setHex(s.you ? COL.you : COL.rival); s.lmat.emissiveIntensity = 1.2; });
+  }
+  k.onTick((dt, t) => {
+    if (!round) return;
+    round.t += dt;
+    if (round.stage === 0 && round.t > 0.4) { round.stage = 1; seats.forEach((s, i) => (s.target = round.bids[i] * H)); }
+    if (round.stage === 1 && round.t > 1.9) {
+      round.stage = 2;
+      const s = seats[round.w], over = round.bids[round.w] > round.worth;
+      s.lmat.emissive.setHex(over ? COL.bad : COL.good); s.mat.emissive.setHex(over ? COL.bad : COL.good);
+      tally.rounds++; tally.over += over ? 1 : 0; tally.sum += round.bids[round.w];
+      if (s.you) { tally.wins++; tally.gain += round.worth - round.bids[round.w]; }
+      seats.forEach((o, i) => { if (i !== round.w) o.lmat.emissiveIntensity = 0.4; });
+    }
+    if (round.stage === 2) seats[round.w].lmat.emissiveIntensity = 3.5 + 1.5 * Math.sin(t * 10);
+    if (round.t > 4.4) newRound();
+    seats.forEach((s) => { s.h += (s.target - s.h) * Math.min(1, dt * 5); s.col.scale.y = s.h; s.col.position.y = s.h / 2; s.light.position.y = s.h + 0.5; });
+    const n = tally.rounds, pm = (v) => `€${(v * PT).toFixed(2)}m`;
+    k.hud.innerHTML = P.role === 0
+      ? `<span>Auctions <b>${n}</b></span><span>Winner overpaid <b>${tally.over}</b></span><span>You won <b>${tally.wins}</b></span><span>Your average gain per auction <b>${n ? (tally.gain >= 0 ? "+" : "−") + pm(Math.abs(tally.gain / n)) : "–"}</b></span>`
+      : `<span>Sales <b>${n}</b></span><span>Winner overpaid <b>${tally.over}</b></span><span>Average winning bid <b>${n ? pm(tally.sum / n) : "–"}</b></span>`;
+  });
+  return {
+    update(p) {
+      P = p;
+      const s = `${p.n}|${p.role}`;
+      if (s !== shape) { shape = s; build(p); }
+      tally = { rounds: 0, over: 0, wins: 0, gain: 0, sum: 0 };
+      newRound();
+    },
+  };
+}
+
+/* Expected gain per auction against your shade, for your field and for 2 and 10 bidders. */
+const SHADES = Array.from({ length: 21 }, (_, i) => i * 2.5);
+const curve = (p, n) => SHADES.map((s) => [s, model({ ...p, role: 0, n, shade: s }).values.ev]);
+
+createLab({
+  id: "L12",
+  area: "M&A & exits",
+  title: "The winner's curse",
+  goal: "Decide <b>how far below your own estimate to bid</b> when several buyers are guessing the same prize, which sale process to push for, and why <b>more bidders</b> are the seller's best friend.",
+  story: "A few years on, your company makes a sensor system. Your only supplier of a key part is for sale. A banker runs a <b>sealed-bid auction</b>. The supplier is worth <b>€10m</b> to a typical buyer and <b>€12m to you</b> (supply security and cost savings), but nobody knows its value exactly: every bidder's own estimate is off by about <b>±25%</b>. The other bidders shave <b>15%</b> off their estimates before they bid. Later, you will be the one selling.",
+  params: [
+    { key: "role", label: "You are", options: [{ value: 0, label: "Buying" }, { value: 1, label: "Selling your firm" }], value: 0 },
+    { key: "n", label: "Bidders (you included, if buying)", min: 1, max: 12, step: 1, value: 6, format: (v) => String(v) },
+    { key: "sigma", label: "How far off the bidders' estimates are", options: [{ value: 10, label: "Low (±10%)" }, { value: 15, label: "Medium (±15%)" }, { value: 25, label: "High (±25%)" }], value: 25, hint: "Standard deviation of each bidder's error, in % of the true value" },
+    { key: "shade", label: "Your shade: bid below your own value", min: 0, max: 50, step: 5, value: 0, format: (v) => `${v}%`, hint: "Buying only. 0% means you bid exactly what you think it is worth to you" },
+    { key: "rival", label: "How the other bidders bid", options: [{ value: 0, label: "Their honest estimate" }, { value: 15, label: "15% below" }, { value: 25, label: "25% below" }], value: 15, hint: "Assumption of this lab, not a measured figure" },
+    { key: "edge", label: "What it is worth to you vs the market", options: [{ value: 0, label: "Same" }, { value: 20, label: "+20%" }, { value: 40, label: "+40%" }], value: 20, hint: "Synergies only you can use" },
+    { key: "myNoise", label: "Your information", options: [{ value: 1, label: "Same as the others" }, { value: 0.5, label: "Deep diligence" }], value: 1, hint: "Deep diligence halves your own estimate error" },
+    { key: "haggle", label: "Selling only: negotiating skill", options: [{ value: 0, label: "Take their offer" }, { value: 10, label: "Haggle hard" }], value: 0, hint: "Hard haggling lifts the price by 10% of the buyer's estimate (assumed)" },
+  ],
+  metrics: [
+    { key: "win", label: "Chance you win", unit: "%", format: (v) => v.toFixed(0) },
+    { key: "price", label: "Price when the deal is done", format: eur },
+    { key: "ifwin", label: "Gain when the deal is done", format: eurS },
+    { key: "ev", label: "Expected gain per auction", format: eurS },
+  ],
+  model,
+  chart: {
+    title: "Expected gain per auction vs your shade (buying)",
+    xLabel: "your shade: % below what it is worth to you", yLabel: "expected gain per auction",
+    xMin: 0, xMax: 50, yMin: -1.5, yMax: 1.5,
+    xFormat: (v) => `${Math.round(v)}%`,
+    yFormat: (v) => `${v < 0 ? "−" : ""}€${Math.abs(v).toFixed(1)}m`,
+    series(p) {
+      const n = p.role === 1 ? 6 : p.n;
+      return [
+        { name: `your field (${n} bidders)`, color: "brass", points: curve(p, n) },
+        { name: "2 bidders", color: "ok", points: curve(p, 2) },
+        { name: "10 bidders", color: "jam", points: curve(p, 10) },
+        { color: "dim", dashed: true, points: [[0, 0], [50, 0]] },
+      ];
+    },
+    marker: (p, r) => (p.role === 0 ? [p.shade, r.values.ev] : [NaN, NaN]),
+    note: "Illustrative model: each bidder's estimate is the true value plus a random error (normal, same size for all, set by the uncertainty lever); the highest bid wins; the other bidders always shave a fixed share. It is not fitted to deal data. Capen et al. (1971) and Kagel & Levin (1986) show the pattern in oil leases and experiments; Moeller et al. (2005) show bidders' shareholders losing in the 1998-2001 merger wave, though partly for other reasons. Below the dashed line the winner loses. The seller's side is in Test 3.",
+  },
+  stage: { floor: [30, 22], view: 21 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. How far below your estimate?",
+      situation: "Six bidders, you among them, are bidding for the supplier. Everyone's estimate is uncertain by about ±25%. Your team's best estimate says it is worth <b>€12m to you</b>. Other bidders shave 15% off their own estimates. How do you bid?",
+      question: "Your call: which bid earns the most per auction you enter?",
+      baseline: { n: 6, sigma: 25, rival: 15, edge: 20, shade: 0 },
+      options: [
+        { id: "A", label: "Bid your honest estimate", detail: "Bid about €12m: exactly what you think it is worth to you", params: { shade: 0 } },
+        { id: "B", label: "Shade 10%", detail: "Bid about 10% under your estimate", params: { shade: 10 } },
+        { id: "C", label: "Shade 30%", detail: "Bid about 30% under your estimate", params: { shade: 30 } },
+        { id: "D", label: "Shade 50%", detail: "Bid half of what you think it is worth", params: { shade: 50 } },
+      ],
+      rankBy: "ev", better: "higher", size: false,
+      learning: "<p><b>Do not bid your honest estimate.</b> With six bidders and estimates ±25% off, the auction is won by whoever guessed highest, and that is usually someone who overestimated. Bidding your estimate wins 62% of auctions at an average price of €13.65m for a firm worth €12m to you: <b>−€1.65m each time you win, −€1.03m per auction you enter</b>. Shading 10% still loses (−€0.79m per win, −€0.38m per auction). Shading 30% wins 15% of auctions and gains €0.88m per win, <b>+€0.14m per auction</b>. Shading 50% is too timid: you win about 1% of the time (+€0.02m).</p><p><b>Rule of thumb:</b> the winner's price is the highest of several noisy guesses, so shade at least until a win would still pay (here about 20% with six bidders), and then trade margin against the chance of winning (best here: about 30%). The curse scales with uncertainty: at ±10% the same honest bid loses only €0.07m per win, 24 times less. Not winning is a fine outcome.</p>",
+    },
+    {
+      title: "Test 2. Which process do you push for?",
+      situation: "The banker plans a <b>broad auction with 10 bidders</b>. You bid 30% under your estimate. You can ask for a different route: a <b>pre-emptive offer</b> before the process opens (2 bidders), a <b>narrow second round</b> (4 bidders), or stay in the broad auction and pay for <b>deep diligence</b> (halves your own estimate error, so you can bid closer: a 20% shade).",
+      question: "Your call: which route gives the best expected gain per auction?",
+      baseline: { n: 10, sigma: 25, rival: 15, edge: 20, shade: 30 },
+      options: [
+        { id: "A", label: "Pre-empt: 2 bidders", detail: "Make an early offer so the race is you and one rival", params: { n: 2, shade: 30 } },
+        { id: "B", label: "Narrow second round: 4 bidders", detail: "Get shortlisted instead of competing with everyone", params: { n: 4, shade: 30 } },
+        { id: "C", label: "Stay in the broad auction: 10 bidders", detail: "Same 30% shade", params: { n: 10, shade: 30 } },
+        { id: "D", label: "Broad auction plus deep diligence", detail: "10 bidders, your estimate error halved, 20% shade (the diligence fee is not counted)", params: { n: 10, myNoise: 0.5, shade: 20 } },
+      ],
+      rankBy: "ev", better: "higher", size: false,
+      learning: "<p><b>Fewer bidders beats everything else.</b> With a 30% shade, expected gain per auction is <b>+€1.16m with 2 bidders</b>, +€0.33m with 4, and just <b>+€0.03m with 10</b>: about 40 times less. What changes as the field grows: you win less often (49% vs 9%), each win pays less (+€2.39m vs +€0.29m), and the winning price climbs (€9.6m vs €11.7m, on a firm worth €12m to you). The shade at which a win stops being a loss rises from 8% (2 bidders) to 15% (4), 20% (6) and 27% (10).</p><p>Deep diligence helps (+€0.11m, about four times the broad-auction figure), but it does not come close to changing the field. <b>Rule of thumb:</b> the more bidders and the more uncertainty, the lower you must bid. Better still, avoid the crowd: pre-empt, or find the deal nobody else is auctioning.</p>",
+    },
+    {
+      title: "Test 3. Now you are the seller",
+      situation: "Years later, your company is worth buying. A large strategic has phoned with friendly interest. Buyers can only guess what a young deep-tech firm is worth: their estimates are ±25% off, and they bid 15% below their estimate. The firm is worth about <b>€10m</b> to a typical buyer. How do you sell?",
+      question: "Your call: which route gets the highest expected price?",
+      baseline: { role: 1, n: 1, sigma: 25, rival: 15, haggle: 0 },
+      options: [
+        { id: "A", label: "Run a broad auction", detail: "8 interested bidders in a banker-run process", params: { n: 8, haggle: 0 } },
+        { id: "B", label: "Negotiate hard with the strategic", detail: "One buyer, skilled haggling", params: { n: 1, haggle: 10 } },
+        { id: "C", label: "Wait for the inbound offer", detail: "One buyer, you take what they offer", params: { n: 1, haggle: 0 } },
+        { id: "D", label: "Run a limited process", detail: "3 bidders", params: { n: 3, haggle: 0 } },
+      ],
+      rankBy: "price", better: "higher", size: false,
+      learning: "<p><b>As seller, the winner's curse works for you: add bidders.</b> The expected price is <b>€11.53m with 8 bidders</b>, €10.30m with 3, €9.50m negotiating hard with one buyer, and <b>€8.50m</b> taking the inbound offer. A second bidder alone is worth about +€1.2m (€9.70m), more than skilled haggling with one buyer (+€1.0m, an assumption of this model). The highest of several noisy estimates is on average well above the typical estimate, and a lone buyer has no reason to bid up.</p><p><b>Rule of thumb:</b> competition beats negotiating skill (Bulow and Klemperer, 1996). Even a friendly strategic should be invited into a process. The model ignores banker fees, leaks, distraction and deals that fail; and in real auctions sophisticated buyers shade more as rivals multiply, so the gain from the eighth bidder is smaller than shown here.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>The winner is the one who overestimated most.</b> Six bidders, estimates ±25% off: bidding your honest estimate means paying €13.65m for something worth €12m to you, a loss of €1.65m per win.",
+    "<b>More bidders and more uncertainty mean deeper shading.</b> The shade at which a win stops being a loss rises from 8% with 2 bidders to 27% with 10. At ±10% uncertainty the curse almost vanishes.",
+    "<b>Fix the structure, not only the bid:</b> pre-empt, narrow the field, do your own diligence, or walk away. Not winning is a result. If you win most auctions you enter, you are probably overpaying.",
+    "<b>The mirror image:</b> as seller, add bidders. A second bidder was worth more than skilled haggling, and eight bidders lifted the price about a third over an inbound offer in this model.",
+  ],
+});
+</script>
+</body>
+</html>

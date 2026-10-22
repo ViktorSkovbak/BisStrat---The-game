@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Cash Cycle Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model: 24 months of cash for a growing product company (all money in k euro) ----------
+   Stock, unpaid invoices and unpaid supplier bills are held at "days of" the current month's flows.
+   Cash each month = profit - the extra money tied up in stock and invoices + the extra credit from suppliers.
+   Sales grow for 18 months at the chosen pace, then stay flat for the last 6. */
+const RAMP = 18, U0 = 80, COST = 1200, OPEX = 480, LEAD = 45; // start units/month; cost per unit; running costs per unit; days from order to delivery
+
+function model(p) {
+  const g = p.growth / 100;
+  const dsoEff = (1 - p.deposit) * p.dso - p.deposit * LEAD; // a deposit is paid LEAD days before delivery
+  const ccc = p.dio + dsoEff - p.dpo;
+  const track = { cash: [], inv: [], ar: [], ap: [], sales: [], spend: [], units: [] };
+  let cash = p.raise, prev = 0, cum = 0, need = 0, low = cash, lowM = 0;
+  for (let t = 0; t <= 24; t++) {
+    const u = U0 * Math.pow(1 + g, Math.min(t, RAMP));
+    const sales = (u * p.price) / 1000, cogs = (u * COST) / 1000, opex = (u * OPEX) / 1000;
+    const inv = (p.dio / 30) * cogs, ar = (dsoEff / 30) * sales, ap = (p.dpo / 30) * cogs;
+    const nwc = inv + ar - ap;
+    if (t > 0) { const fcf = sales - cogs - opex - (nwc - prev); cash += fcf; cum += fcf; need = Math.max(need, -cum); }
+    prev = nwc;
+    if (cash < low) { low = cash; lowM = t; }
+    for (const [key, val] of Object.entries({ cash, inv, ar, ap, sales, spend: cogs + opex, units: u })) track[key].push(val);
+  }
+  const s0 = (U0 * p.price) / 1000, m = (s0 - (U0 * (COST + OPEX)) / 1000) / s0;
+  const n = ((p.dio / 30) * COST * U0 / 1000 + (dsoEff / 30) * s0 - (p.dpo / 30) * COST * U0 / 1000) / s0;
+  const sfg = n <= m ? Infinity : (m / (n - m)) * 100; // growth per month that profit alone can fund
+  const caption = low >= 0 && need < 1
+    ? `Cash cycle ${Math.round(ccc)} days: profit alone can fund ${p.growth}% growth a month, so cash never drops below the ${money(p.raise)} you started with.`
+    : `Cash cycle ${Math.round(ccc)} days: profit alone funds ${Number.isFinite(sfg) ? sfg.toFixed(1) + "%" : "any"} growth a month, you grow ${p.growth}%. The plan needs ${money(need)} from outside; cash ${low < 0 ? "runs out" : "bottoms at " + money(low)} in month ${lowM}.`;
+  return { values: { ccc, sfg, low, lowM, need, short: Math.max(0, -low), sales24: track.sales[24] }, caption, track };
+}
+function money(k) { const a = Math.abs(k), s = k < 0 ? "−" : ""; return a >= 1000 ? `${s}€${(a / 1000).toFixed(2)}M` : `${s}€${Math.round(a)}k`; }
+
+/* ---------- The factory: crates are stock, discs are unpaid invoices, the vault level is cash ---------- */
+function scene(k) {
+  const { THREE, box, cyl, sphere, mats, glow, onTick } = k;
+  const gold = glow(1.6), bill = glow(0.9), flow = glow(2.6), FULL = 1500; // vault is full at 1.5 M euro
+  box(7, 3, 7, mats.dark, -12, 0, 0); cyl(0.5, 3, mats.steel, -14.5, 3, -2.5);
+  box(7, 0.06, 6, mats.belt, -4, 0, 0); box(5, 0.5, 5, mats.belt, 13, 0, 4); box(4, 3, 3, mats.steel, 15.2, 0, 8.5);
+  box(5, 0.5, 5, mats.belt, -12, 0, 8);
+  const windows = [0, 1, 2, 3, 4].map((i) => sphere(0.3, glow(0.2), -8.4, 1.8, -2.4 + i * 1.2));
+  const pool = (n, geo, mat, place) => Array.from({ length: n }, (_, i) => { const m = new THREE.Mesh(geo, mat); m.castShadow = true; place(m, i); k.scene.add(m); return m; });
+  const crates = pool(60, new THREE.BoxGeometry(0.8, 0.7, 0.8), mats.brass, (m, i) => m.position.set(-6.5 + (i % 30 % 6), 0.35 + (i >= 30) * 0.7, -2.4 + Math.floor(i % 30 / 6) * 1.2));
+  const owed = pool(40, new THREE.CylinderGeometry(1.1, 1.1, 0.14, 20), bill, (m, i) => m.position.set(13, 0.6 + i * 0.16, 4));
+  const debts = pool(30, new THREE.CylinderGeometry(1.1, 1.1, 0.14, 20), mats.cool, (m, i) => m.position.set(-12, 0.6 + i * 0.16, 8));
+  [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([a, b]) => box(0.3, 4.6, 0.3, mats.steel, 4 + a * 2, 0, -6 + b * 2));
+  box(4.6, 0.3, 4.6, mats.steel, 4, 0, -6); box(4.6, 0.3, 4.6, mats.steel, 4, 4.6, -6);
+  const fill = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 1, 24), gold); k.scene.add(fill);
+  const alarm = sphere(0.45, glow(0.3), 4, 5.5, -6);
+  const coins = pool(16, new THREE.SphereGeometry(0.22, 10, 8), flow, () => {});
+  const lanes = [new THREE.Vector3(13, 1.2, 4), new THREE.Vector3(4, 2.2, -6), new THREE.Vector3(-8, 1.5, 0)];
+  let R = null, clock = 0;
+  function draw(m) {
+    const T = R.track, i = Math.min(23, Math.floor(m)), f = m - i, at = (a) => a[i] + (a[i + 1] - a[i]) * f;
+    const cash = at(T.cash), inv = at(T.inv), ar = at(T.ar), ap = at(T.ap), sales = at(T.sales), spend = at(T.spend), units = at(T.units);
+    crates.forEach((c, j) => (c.visible = j < inv / 40));
+    owed.forEach((c, j) => (c.visible = j < ar / 50));
+    debts.forEach((c, j) => (c.visible = j < ap / 40));
+    windows.forEach((w, j) => (w.material.emissiveIntensity = j < Math.ceil(units / 90) ? 3 : 0.2));
+    const h = cash < 0 ? 0.08 : Math.max(0.08, Math.min(1, cash / FULL) * 4.2);
+    fill.scale.y = h; fill.position.set(4, 0.3 + h / 2, -6); fill.material = cash < 0 ? mats.jam : gold;
+    alarm.material = cash < 0 ? mats.jam : mats.steel;
+    const nIn = Math.min(8, Math.ceil(sales / 110)), nOut = Math.min(8, Math.ceil(spend / 90));
+    coins.forEach((c, j) => {
+      const inbound = j < 8, idx = inbound ? j : j - 8, f2 = (idx / 8 + clock * 0.4) % 1;
+      c.visible = idx < (inbound ? nIn : nOut);
+      c.material = inbound ? flow : mats.cool;
+      const a = inbound ? lanes[0] : lanes[1], b = inbound ? lanes[1] : lanes[2];
+      c.position.lerpVectors(a, b, f2); c.position.y += Math.sin(Math.PI * f2) * 1.5;
+    });
+    k.hud.innerHTML = `<span>Month <b>${Math.floor(m)}</b></span><span>Cash <b>${money(cash)}</b></span><span>Stock <b>${money(inv)}</b></span><span>Customers owe <b>${money(ar)}</b></span><span>You owe suppliers <b>${money(ap)}</b></span>`;
+  }
+  onTick((dt) => { if (R) { clock = (clock + dt) % 27; draw(Math.min(24, clock)); } });
+  return { update(p, result) { R = result; clock = 0; if (k.reduceMotion) draw(result.values.lowM); } };
+}
+
+const chart = {
+  title: "Cash in the bank, month by month",
+  xLabel: "month", yLabel: "cash (k euro)",
+  xMin: 0, xMax: 24,
+  yFormat: (v) => (v < 0 ? "−" : "") + Math.abs(v).toLocaleString("en-US"),
+  series(p, r) {
+    const today = model({ ...p, dio: 90, dso: 60, dpo: 30, deposit: 0 }).track.cash;
+    const mine = r.track.cash, all = [...today, ...mine];
+    chart.yMin = Math.min(0, Math.floor(Math.min(...all) / 500) * 500);
+    return [
+      { name: "your setting", color: "brass", points: mine.map((v, t) => [t, v]) },
+      { name: "today's terms (90 / 60 / 30 days, no deposits)", color: "jam", dashed: true, points: today.map((v, t) => [t, v]) },
+      { name: "zero", color: "dim", dashed: true, points: [[0, 0], [24, 0]] },
+    ];
+  },
+  marker: (p, r) => [r.values.lowM, r.values.low],
+  note: "Illustrative model: sales grow at the chosen pace for 18 months, then flatten; margins and prices stay fixed. Stock, unpaid invoices and supplier credit are held at 'days of' the month's flows, as in the cash-cycle formula. The terms are those of a hardware start-up, not of Dell: Dell ran at about −5 to −8 days around 1998 (secondary sources), this company runs at +120.",
+};
+
+const lab = createLab({
+  id: "L08",
+  area: "Business anatomy",
+  title: "The cash conversion cycle",
+  goal: "Decide <b>how fast you can afford to grow</b>, which terms to fix first (stock, deposits, supplier credit or price), and <b>how much to raise</b> so that a profitable product company does not run out of cash.",
+  story: "It is 2027 and your hardware company sells <b>€2,000 units at a 40% gross margin</b>. Running costs take another 24% of price, so each unit earns a <b>16% profit</b>. You hold about <b>90 days of stock</b>, customers pay <b>60 days</b> after delivery, and you pay suppliers after <b>30 days</b>. You sell 80 units a month and plan to grow <b>10% a month for 18 months</b>. You have <b>€800k</b> in the bank. Every month shows a profit. Will you still have cash?",
+  params: [
+    { key: "growth", label: "Sales growth per month", min: 0, max: 20, step: 1, value: 10, format: (v) => `${v}%` },
+    { key: "dio", label: "Days of stock you hold", options: [{ value: 30, label: "30" }, { value: 45, label: "45" }, { value: 60, label: "60" }, { value: 90, label: "90" }, { value: 120, label: "120" }], value: 90, hint: "Stock bought before it is sold: parts and finished units" },
+    { key: "dso", label: "Days customers take to pay", options: [{ value: 30, label: "30" }, { value: 45, label: "45" }, { value: 60, label: "60" }, { value: 90, label: "90" }], value: 60, hint: "Counted from delivery" },
+    { key: "deposit", label: "Deposit paid with the order", options: [{ value: 0, label: "None" }, { value: 0.15, label: "15%" }, { value: 0.3, label: "30%" }, { value: 0.5, label: "50%" }], value: 0, hint: "Paid 45 days before delivery; the rest follows the payment days above" },
+    { key: "dpo", label: "Days until you pay suppliers", options: [{ value: 15, label: "15" }, { value: 30, label: "30" }, { value: 45, label: "45" }, { value: 60, label: "60" }, { value: 90, label: "90" }], value: 30 },
+    { key: "price", label: "Price per unit", min: 1800, max: 2400, step: 50, value: 2000, format: (v) => `€${v.toLocaleString("en-US")}`, hint: "Volume is assumed to hold when you change price" },
+    { key: "raise", label: "Money in the bank at the start", min: 0, max: 3000, step: 100, value: 800, format: (v) => money(v) },
+  ],
+  metrics: [
+    { key: "ccc", label: "Cash cycle", unit: "days", format: (v) => String(Math.round(v)) },
+    { key: "sfg", label: "Growth profit alone can fund", unit: "% a month", format: (v) => (Number.isFinite(v) ? v.toFixed(1) : "no limit") },
+    { key: "low", label: "Lowest cash point", format: (v) => money(v) },
+    { key: "lowM", label: "Month of the lowest point", format: (v) => String(v) },
+    { key: "need", label: "Outside money the plan needs", format: (v) => money(v) },
+    { key: "short", label: "Cash shortfall with this start", format: (v) => money(v) },
+  ],
+  model,
+  chart,
+  stage: { floor: [36, 24], view: 24, target: [0, 0, 1] },
+  scene,
+  tests: [
+    {
+      title: "Test 1. One change to the terms",
+      situation: "The plan is 10% growth a month with today's terms. Cash is short: the plan needs about <b>€1.05M</b> of outside money and you have €800k. You can win <b>one</b> change this quarter. (Cutting stock to 45 days works if your supplier lead times allow it. A 30% deposit means customers pay it 45 days before delivery. A 5% price rise assumes the same number of buyers.)",
+      baseline: {},
+      options: [
+        { id: "A", label: "Cut stock to 45 days", detail: "Half the stock, smaller and more frequent orders", params: { dio: 45 } },
+        { id: "B", label: "Take 30% deposits on orders", detail: "Customers pay 30% when they order", params: { deposit: 0.3 } },
+        { id: "C", label: "Stretch supplier payment to 60 days", detail: "Suppliers wait twice as long", params: { dpo: 60 } },
+        { id: "D", label: "Raise the price 5%", detail: "€2,100 a unit, same volume", params: { price: 2100 } },
+      ],
+      rankBy: "need", better: "lower",
+      question: "Your call: which change cuts the outside money you need the most?",
+      learning: "<p><b>Deposits win; price, the usual instinct, is the smallest lever.</b> Today the plan needs about €1.05M of outside money. Deposits cut it to about €285k (3.7× less), because customer cash arrives before the units are delivered. Halving stock cuts it to about €394k (2.7×). Longer supplier credit cuts it to about €613k (1.7×). A 5% price rise cuts it to about €722k (1.5×).</p><p><b>Why price is weak here:</b> it adds profit, but it also makes every unpaid invoice 5% bigger, and the hole is a timing problem, not a margin problem. Price still pays off later (cash at month 24 ends higher), but it does little for the dip. <b>The rule:</b> to shrink the hole, shorten the cash cycle first: the days between paying for parts and being paid. Count what each fix costs: deposits may lose customers, thin stock risks stock-outs, and longer supplier terms may raise the unit price.</p>",
+    },
+    {
+      title: "Test 2. Growing faster",
+      situation: "A large customer would lift growth to <b>15% a month</b> for the 18 months. You still have €800k and a 120-day cash cycle. At 10% growth the plan already needs about €1.05M. Which plan gives you the biggest company at month 24 <b>without running out of cash</b>?",
+      baseline: {},
+      options: [
+        { id: "A", label: "Take the order: 15% growth, today's terms", detail: "Same stock, invoice and supplier days", params: { growth: 15 } },
+        { id: "B", label: "Stay at 10% growth", detail: "The current plan, today's terms", params: {} },
+        { id: "C", label: "Slow down to 6% growth", detail: "Only what the cash can carry", params: { growth: 6 } },
+        { id: "D", label: "15% growth, but first win better terms", detail: "30% deposits and 60 days with suppliers", params: { growth: 15, deposit: 0.3, dpo: 60 } },
+      ],
+      rankBy: "need", better: "lower", size: false,
+      question: "Your call: the fastest plan that still keeps cash above zero?",
+      best: (rows) => rows.filter((r) => r.r.values.short === 0).sort((a, b) => b.r.values.sales24 - a.r.values.sales24)[0].id,
+      learning: "<p><b>Faster growth on today's terms is dangerous, not good.</b> Going from 10% to 15% a month raises the hole from about €1.05M to about €3.6M (3.4× bigger) for 1.5× the growth. The hole grows much faster than the growth, because every extra unit needs cash for stock and invoices before it pays back. Even 10% already runs out of cash with €800k (low point −€251k in month 18).</p><p><b>Only D works.</b> With 30% deposits and 60-day supplier terms, 15% growth needs about €588k of outside money, so the €800k covers it, and monthly sales reach about €1.98M by month 24, against about €457k at 6%. <b>The rule:</b> what profit can fund is a pace limit (here about 5% a month on today's terms). Go faster only when the terms are fixed first or the funding is signed. Growth is a cash decision, not only a sales decision.</p>",
+    },
+    {
+      title: "Test 3. How much to raise",
+      situation: "The plan is 10% a month on today's terms for 18 months, and the real peak funding need is about <b>€1.05M</b>. You are choosing the size of the round. Raising more costs you ownership; raising too little breaks the plan.",
+      baseline: {},
+      options: [
+        { id: "A", label: "Raise €0.5M", detail: "Cheapest in ownership", params: { raise: 500 } },
+        { id: "B", label: "Raise €1.0M", detail: "Round figure, close to the plan", params: { raise: 1000 } },
+        { id: "C", label: "Raise €1.5M", detail: "The plan plus about 40%", params: { raise: 1500 } },
+        { id: "D", label: "Raise €3.0M", detail: "Nearly three times the need", params: { raise: 3000 } },
+      ],
+      rankBy: "short", better: "lower", size: false,
+      question: "Your call: the smallest raise that keeps the company alive even if growth runs a point ahead of plan?",
+      best: (rows) => rows.filter((r) => r.r.values.need * 1.35 <= r.p.raise).sort((a, b) => a.p.raise - b.p.raise)[0].id,
+      learning: "<p><b>€1.5M is the answer; the round figure €1.0M fails.</b> The plan needs about €1.05M, so €1.0M ends about €51k below zero around month 18, and €0.5M ends about €551k short. €1.5M covers the plan with a 40% cushion: growth of 11% a month would need about €1.41M, and the plan still survives. At 12% the need is about €1.83M, so nothing below that is safe against a faster ramp.</p><p><b>€3.0M</b> survives even 13% growth (need about €2.32M), but you pay for that safety in ownership. <b>The rule:</b> raise the peak need, not the average, plus a third to a half for a faster ramp or slower customers, and start raising 6-9 months before the dip. The dip is also when raising is hardest, because investors see an empty bank.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Profit is not cash.</b> A profitable product company can run out of money because growth ties cash up in stock and unpaid invoices. Here a 120-day cash cycle plus 10% monthly growth needs about €1.05M from outside.",
+    "<b>Cash cycle = days of stock + days customers take to pay − days you take to pay suppliers.</b> Profit alone can fund only about 5% growth a month here (roughly 85% a year); the rest must come from shortening the cycle or from outside money.",
+    "<b>Fix the terms before you chase growth.</b> Deposits (3.7× smaller hole) beat less stock (2.7×), supplier credit (1.7×) and a price rise (1.5×). On slow terms the hole grows faster than the growth: 15% a month needs 3.4× the money of 10%.",
+    "<b>Raise the peak need plus a cushion, early.</b> Size the round on the lowest point of the cash curve, add a third to a half, and raise before the dip, not in it.",
+  ],
+});
+</script>
+</body>
+</html>

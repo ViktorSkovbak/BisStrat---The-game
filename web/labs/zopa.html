@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>ZOPA Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model (illustrative): an anchored price inside the zone, plus trades across issues ---------- */
+const W = 0.37;    // anchoring weight: about 37 cents of final price per euro of opening number (Orr & Guthrie summary, via Harvard PON)
+const FAIR = 0.25; // assumption: the customer signs only if it keeps about a quarter of the gain
+const SURE = 0.95; // even a good deal fails sometimes
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+function terms(p) {
+  const dub = Math.log2(p.volume / 200); // doublings of the 200-unit pilot
+  return {
+    v: 40 * dub + 0.74 * (60 - p.days),    // worth to Viktor, euros per unit: scale (about 40 per doubling) and cash (36% a year)
+    c: -10 * dub - 0.123 * (60 - p.days),  // cost to the customer, euros per unit: lock-in risk and cash (6% a year)
+  };
+}
+
+function model(p) {
+  const t = terms(p);
+  const lo = p.batna, hi = p.value, mid = (lo + hi) / 2;   // the zone at today's terms
+  const anchor = p.opener ? p.ask : p.custOpen;            // whoever speaks first sets the anchor
+  const price = clamp(mid + W * (anchor - mid), lo, hi) - p.cut;
+  const allin = price + t.v;                               // price-equivalent for Viktor, terms included
+  const zone = hi + t.c - (lo - t.v);                      // width of the zone with these terms
+  const share = zone > 0 ? (hi + t.c - price) / zone : 0;  // the customer's share of the gain
+  const chance = zone <= 0 || allin < lo ? 0 : SURE * clamp(share / FAIR, 0, 1);
+  const ev = chance * allin + (1 - chance) * lo;           // expected price per unit, counting a failed deal
+  const gain = (p.volume * (ev - lo)) / 1000;              // thousand euros above the second-best deal
+  const caption = zone <= 0 ? "No overlap between what you need and what they can pay: no deal is possible on these terms."
+    : `The zone runs from €${Math.round(lo - t.v)} to €${Math.round(hi + t.c)} per unit. ${p.opener ? "Your" : "The customer's"} opening number pulls the price to about €${Math.round(price)}; chance the deal closes ${Math.round(chance * 100)}%.`;
+  return { values: { price, chance: chance * 100, zone: Math.max(0, zone), ev, gain }, caption };
+}
+
+/* ---------- The table: two lights, a brass marker sliding along the zone bar ---------- */
+function scene(k) {
+  const { THREE, box, cyl, sphere, mats, glow, onTick } = k;
+  const X = (v) => ((v - 400) / 900) * 16 - 8;            // euros per unit to a position on the bar
+  const lamp = (c) => new THREE.MeshStandardMaterial({ color: 0x101820, emissive: c, emissiveIntensity: 1 });
+  const lampV = lamp(0xffb547), lampC = lamp(0x7fb3d6), lampD = lamp(0x59c987);
+  const zoneMat = new THREE.MeshStandardMaterial({ color: 0x0a2a1a, emissive: 0x59c987, emissiveIntensity: 1.1, transparent: true, opacity: 0.85 });
+  box(8, 0.9, 3, mats.steel, 0, 0, -4); box(8.6, 0.12, 3.6, mats.brass, 0, 0.9, -4);   // table
+  for (const s of [-1, 1]) { cyl(0.8, 1.9, mats.dark, s * 6.4, 0, -4); sphere(0.55, mats.steel, s * 6.4, 2.45, -4); }  // the two people
+  const lightV = sphere(0.5, lampV, -6.4, 3.7, -4), lightC = sphere(0.5, lampC, 6.4, 3.7, -4), dealLight = sphere(0.4, lampD, 0, 3.2, -4);
+  const crates = [0, 1, 2, 3].map((i) => box(0.8, 0.7, 0.8, mats.brass, -3 + i * 0.95, 1.02, -4));  // units committed
+  const cash = [0, 1, 2].map((i) => sphere(0.24, lamp(0xffb547), 1.6 + i * 0.8, 1.3, -4));         // speed of payment
+  box(16.6, 0.2, 1.8, mats.dark, 0, 0, 2.5);                                                        // the zone bar
+  const zone = box(1, 0.34, 1.4, zoneMat, 0, 0, 2.5);
+  const postV = box(0.22, 1.5, 1.8, lampV, 0, 0, 2.5), postC = box(0.22, 1.5, 1.8, lampC, 0, 0, 2.5);
+  const marker = cyl(0.5, 1.9, mats.brass, 0, 0.2, 2.5);                                           // the agreed price
+  const flag = sphere(0.32, mats.jam, 0, 2.6, 2.5);                                                 // the opening number that anchors it
+  let T = { zx: 0, zw: 1, mx: 0, fx: 0 };
+  onTick((dt) => {
+    const f = Math.min(1, dt * 5);
+    zone.position.x += (T.zx - zone.position.x) * f; zone.scale.x += (T.zw - zone.scale.x) * f;
+    marker.position.x += (T.mx - marker.position.x) * f; flag.position.x += (T.fx - flag.position.x) * f;
+  });
+  return {
+    update(p, r) {
+      const t = terms(p), lo = p.batna - t.v, hi = p.value + t.c, ok = hi > lo;
+      postV.position.x = X(lo); postC.position.x = X(hi);
+      zone.visible = ok;
+      T = { zx: X((lo + hi) / 2), zw: Math.max(0.01, X(hi) - X(lo)), mx: X(r.values.price), fx: X(p.opener ? p.ask : p.custOpen) };
+      lampV.emissiveIntensity = 0.3 + ((p.batna - 500) / 300) * 3;      // Viktor's light: strength of his alternative
+      lampC.emissiveIntensity = 0.3 + ((p.value - 800) / 300) * 3;      // the customer's light: how much they want the product
+      lampD.emissiveIntensity = 0.1 + (r.values.chance / 100) * 3;      // the deal light: chance it closes
+      flag.material = p.opener ? mats.jam : mats.cool;
+      crates.forEach((c, i) => { c.visible = i < p.volume / 100; });
+      cash.forEach((c, i) => { c.material.emissiveIntensity = i < (p.days === 15 ? 3 : p.days === 30 ? 2 : 1) ? 3 : 0.1; });
+      k.hud.innerHTML = `<span>Zone <b>€${Math.round(lo)}-€${Math.round(hi)}</b></span><span>Price <b>€${Math.round(r.values.price)}</b></span><span>Crates = units committed</span><span>Small lamps = how fast they pay</span>`;
+    },
+  };
+}
+
+const eur = (v) => `€${Math.round(v)}`;
+
+const lab = createLab({
+  id: "L16",
+  area: "Negotiation",
+  title: "ZOPA, BATNA and the first number",
+  goal: "Decide <b>who names a number first and how high</b>, which preparation lever to pull before the meeting, and <b>what to trade</b> when the other side pushes on price.",
+  story: "It is 2027. Your hardware company has a working product and a large industrial customer is ready to buy a <b>first paid pilot: 200 units</b>. You have a walk-away option: a smaller buyer who would pay about <b>€600 a unit</b>. The customer would pay up to about <b>€900</b>, but will not tell you. Their procurement team opens around <b>€560</b>. Terms on the table: price per unit, volume, and payment in <b>60 days</b>. For a young company cash is dear (about 36% a year); for them it is cheap (about 6%).",
+  params: [
+    { key: "opener", label: "Who names a number first", options: [{ value: 0, label: "Customer" }, { value: 1, label: "You" }], value: 0 },
+    { key: "ask", label: "Your opening price (€ per unit)", min: 600, max: 1300, step: 50, value: 900, format: eur },
+    { key: "custOpen", label: "Customer's opening price (€ per unit)", min: 450, max: 750, step: 10, value: 560, format: eur },
+    { key: "batna", label: "Your walk-away price (set by your best alternative)", min: 500, max: 800, step: 20, value: 600, format: eur, hint: "The price at which your next-best buyer is as good as this deal (your BATNA)" },
+    { key: "value", label: "Most the customer would pay (€ per unit)", min: 800, max: 1100, step: 10, value: 900, format: eur, hint: "Their reservation price: you never see it in real life" },
+    { key: "volume", label: "Units committed", options: [{ value: 200, label: "200" }, { value: 300, label: "300" }, { value: 400, label: "400" }], value: 200 },
+    { key: "days", label: "Payment after", options: [{ value: 60, label: "60 days" }, { value: 30, label: "30 days" }, { value: 15, label: "15 days" }], value: 60 },
+    { key: "cut", label: "Price cut you give (€ per unit)", min: 0, max: 120, step: 5, value: 0, format: eur },
+  ],
+  metrics: [
+    { key: "price", label: "Price per unit if signed", unit: "€", format: (v) => Math.round(v) },
+    { key: "chance", label: "Chance the deal closes", unit: "%", format: (v) => Math.round(v) },
+    { key: "zone", label: "Zone of agreement", unit: "€/unit", format: (v) => Math.round(v) },
+    { key: "ev", label: "Your expected price per unit", unit: "€", format: (v) => Math.round(v) },
+    { key: "gain", label: "Extra money vs your alternative", unit: "k€", format: (v) => v.toFixed(1) },
+  ],
+  model,
+  chart: {
+    title: "The opening number against what you can expect",
+    xLabel: "opening number on the table (€ per unit)", yLabel: "your expected price (€ per unit)",
+    xMin: 450, xMax: 1300, yMin: 550, yMax: 900,
+    xFormat: (v) => `€${Math.round(v)}`, yFormat: (v) => `€${Math.round(v)}`,
+    series(p) {
+      const you = [], them = [];
+      for (let x = 600; x <= 1300; x += 10) you.push([x, model({ ...p, opener: 1, ask: x }).values.ev]);
+      for (let x = 450; x <= 750; x += 10) them.push([x, model({ ...p, opener: 0, custOpen: x }).values.ev]);
+      return [
+        { name: "if you open at this number", color: "brass", points: you },
+        { name: "if the customer opens at this number", color: "cool", points: them },
+      ];
+    },
+    marker: (p, r) => [p.opener ? p.ask : p.custOpen, r.values.ev],
+    note: "Illustrative model: the price moves about 37 cents for every euro of opening number (the average in a published summary of anchoring studies), and the customer walks if it keeps under a quarter of the gain (an assumption, not data). The shape is the point; the euros are not a forecast.",
+  },
+  stage: { floor: [24, 16], view: 16, target: [0, 0, -0.5] },
+  scene,
+  tests: [
+    {
+      title: "Test 1. Who names a number first?",
+      situation: "The meeting is tomorrow. Everyone tells you not to show your hand: let procurement go first, then react. You know your fallback is €600 and guess the customer might pay up to about €900. The customer's opening will probably be about €560.",
+      baseline: {},
+      options: [
+        { id: "A", label: "Let them name a number first", detail: "They open around €560", params: { opener: 0 } },
+        { id: "B", label: "Open at €750", detail: "A 'fair' number in the middle of the zone", params: { opener: 1, ask: 750 } },
+        { id: "C", label: "Open at €900", detail: "The most you think they would pay", params: { opener: 1, ask: 900 } },
+        { id: "D", label: "Open at €1,100", detail: "Far above what you think they would pay", params: { opener: 1, ask: 1100 } },
+      ],
+      rankBy: "gain", better: "higher",
+      question: "Your call: which opening gives you the most extra money over your alternative?",
+      learning: "<p><b>Name the first number, and make it ambitious but defensible.</b> The first number pulls the final price toward itself: about 37 cents per euro in the studies behind this model. Waiting lets the customer's €560 pull you down: you end near €680 and get about €15k above your alternative on 200 units. Opening at €750 gives about €28k (1.9×). Opening at €900 gives about €39k (2.6×).</p><p><b>But not absurdly high.</b> At €1,100 the customer keeps too little of the gain, walks away about three times in four, and your expected result falls back to the level of waiting (about €15k). The instinct to let them go first is the expensive one.</p><p><b>Rule of thumb:</b> open first, at or a little above the most you think they would pay, with reasons ready. Beyond roughly 10% over their limit, deal risk eats the anchor's gain (in this model; a real customer may react differently).</p>",
+    },
+    {
+      title: "Test 2. Best preparation before the meeting",
+      situation: "You will open at €900. You have six weeks before the meeting and time for exactly one preparation lever. Today you expect about €795 a unit, counting the risk that the deal fails.",
+      baseline: { opener: 1, ask: 900 },
+      options: [
+        { id: "A", label: "Get a second customer into talks", detail: "A buyer ready to pay about €700 a unit; costs six weeks of founder time", params: { batna: 700 } },
+        { id: "B", label: "Build a stronger value case", detail: "A savings study that lifts what they would pay by about €50", params: { value: 950 } },
+        { id: "C", label: "Open lower to look reasonable", detail: "Open at €800 and close quickly", params: { ask: 800 } },
+      ],
+      rankBy: "ev", better: "higher", size: false,
+      question: "Your call: which lever raises your expected price per unit most?",
+      learning: "<p><b>Improve your alternative first.</b> A second customer at about €700 lifts your expected price by about €35 a unit (about +4%, to roughly €830), because it moves your floor up from €600 to €700 and also softens the cost if this deal fails. A better value case helps by about €15 (to roughly €810). Opening lower to look reasonable costs about €35 (to roughly €760): you hand the customer a lower anchor for nothing.</p><p><b>Rule of thumb:</b> your power in the room comes from what you can do if you walk out, not from how well you argue. Before any big negotiation, spend time on the alternative: a second customer, a distributor, a pilot at another site. Never bluff about it; a claim that cannot be checked will be tested.</p>",
+    },
+    {
+      title: "Test 3. They insist on a lower price",
+      situation: "You opened at €1,000 for 200 units paid in 60 days, and the customer's price after the opening effect is about €842. Procurement says it is too high and asks for €60 off. Paying faster is cheap for them and worth a lot to you. A bigger volume commitment cuts your unit cost, and they dislike committing a little.",
+      baseline: { opener: 1, ask: 1000 },
+      options: [
+        { id: "A", label: "Hold firm", detail: "No change to price or terms", params: {} },
+        { id: "B", label: "Split the difference", detail: "Take €30 off the price, nothing else changes", params: { cut: 30 } },
+        { id: "C", label: "Trade: lower price for faster payment and more volume", detail: "€60 off, but payment in 15 days and 400 units committed", params: { cut: 60, days: 15, volume: 400 } },
+        { id: "D", label: "Give them the €60", detail: "To keep goodwill, ask nothing in return", params: { cut: 60 } },
+      ],
+      rankBy: "gain", better: "higher",
+      question: "Your call: which answer gives you the most extra money over your alternative?",
+      learning: "<p><b>Trade across issues; do not split the price.</b> Trading gives the customer the €60 it asked for, and in return you get cash 45 days sooner and a doubled volume. The zone of agreement grows from €300 to about €358 a unit, and you end about €97k above your alternative on 400 units, 2.8× holding firm (about €35k). Splitting the difference gives about €40k (1.1×). Giving in for nothing gives about €35k (1.0×), no better than holding firm, which puts the deal at risk (a closing chance of about 73% against 95%).</p><p><b>Why it works:</b> the two sides value the issues differently, so a concession on what costs you little and matters to them buys something that matters to you. Both sides come out ahead; a split of one price only divides a fixed pie.</p><p><b>Rule of thumb:</b> before the meeting, list the issues and rank them by how much each side cares. Concede on what they value most and you value least, and never concede on one issue without asking for something on another.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Walk-away power comes from your BATNA:</b> the best alternative to a deal sets your reservation price. A deal is possible only inside the zone between both sides' reservation prices (the ZOPA), and you only ever see your own side of it.",
+    "<b>The first number anchors the outcome.</b> In studies, the person who opens gets the better price, and the final price tracks the opening number. Open first, at or a little above what you think they would pay, with reasons. Absurd anchors raise the risk of a walkout.",
+    "<b>Improve your BATNA before you polish your argument.</b> A second customer or another option moves your floor up and is usually the biggest preparation lever.",
+    "<b>Trade across issues instead of splitting the price.</b> Concede on what is cheap for you and valuable to them, in return for what is valuable to you. Never concede on one issue without asking for something on another.",
+  ],
+});
+</script>
+</body>
+</html>

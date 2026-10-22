@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-22T14:28:37",
+ "generated": "2026-10-22T14:51:06",
  "today": "2026-10-22",
  "player": {
   "xp": 0,
@@ -83,7 +83,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L06",
    "history": []
   },
   {
@@ -103,7 +103,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L07",
    "history": []
   },
   {
@@ -123,7 +123,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L08",
    "history": []
   },
   {
@@ -143,7 +143,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L03",
    "history": []
   },
   {
@@ -163,7 +163,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L09",
    "history": []
   },
   {
@@ -183,7 +183,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L10",
    "history": []
   },
   {
@@ -203,7 +203,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L04",
    "history": []
   },
   {
@@ -223,7 +223,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L11",
    "history": []
   },
   {
@@ -243,7 +243,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L12",
    "history": []
   },
   {
@@ -283,7 +283,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L13",
    "history": []
   },
   {
@@ -303,7 +303,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L14",
    "history": []
   },
   {
@@ -323,7 +323,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L15",
    "history": []
   },
   {
@@ -343,7 +343,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L02",
    "history": []
   },
   {
@@ -363,7 +363,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L16",
    "history": []
   },
   {
@@ -383,7 +383,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L05",
    "history": []
   },
   {
@@ -403,7 +403,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L17",
    "history": []
   },
   {
@@ -423,7 +423,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
-   "build_with": null,
+   "build_with": "L18",
    "history": []
   }
  ],
@@ -436,6 +436,210 @@
     "management"
    ],
    "sim": "labs/kingman.html",
+   "difficulty": 1250,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L02",
+   "title": "The Peter principle: why your best engineer may make a poor lead",
+   "areas": [
+    "org",
+    "management"
+   ],
+   "sim": "labs/peter.html",
+   "difficulty": 1300,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L03",
+   "title": "Wright's law: how unit cost falls with experience",
+   "areas": [
+    "unit_econ",
+    "pricing"
+   ],
+   "sim": "labs/wright.html",
+   "difficulty": 1200,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L04",
+   "title": "Power-law returns: why a fund needs fund-returners",
+   "areas": [
+    "venture",
+    "forecasting"
+   ],
+   "sim": "labs/powerlaw.html",
+   "difficulty": 1250,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L05",
+   "title": "Calibration and the outside view: how sure should you sound",
+   "areas": [
+    "forecasting",
+    "fundraising"
+   ],
+   "sim": "labs/calibration.html",
+   "difficulty": 1200,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L06",
+   "title": "Price wars: the repeated prisoner's dilemma",
+   "areas": [
+    "competition",
+    "strategy"
+   ],
+   "sim": "labs/pricewar.html",
+   "difficulty": 1300,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L07",
+   "title": "Bass diffusion: why sales peak and word of mouth wins",
+   "areas": [
+    "growth",
+    "operations"
+   ],
+   "sim": "labs/bass.html",
+   "difficulty": 1300,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L08",
+   "title": "The cash conversion cycle: why profitable companies run out of cash",
+   "areas": [
+    "anatomy",
+    "venture"
+   ],
+   "sim": "labs/cashcycle.html",
+   "difficulty": 1300,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L09",
+   "title": "Price is the strongest profit lever",
+   "areas": [
+    "pricing",
+    "unit_econ"
+   ],
+   "sim": "labs/pricing.html",
+   "difficulty": 1250,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L10",
+   "title": "ROIC vs the cost of capital: when growth creates value",
+   "areas": [
+    "capital",
+    "strategy"
+   ],
+   "sim": "labs/roic.html",
+   "difficulty": 1300,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L11",
+   "title": "Dilution: raise enough for the next milestone, not as much as possible",
+   "areas": [
+    "fundraising",
+    "venture"
+   ],
+   "sim": "labs/dilution.html",
+   "difficulty": 1300,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L12",
+   "title": "The winner's curse: why the winning bid is usually too high",
+   "areas": [
+    "exits",
+    "behavioural"
+   ],
+   "sim": "labs/winners-curse.html",
+   "difficulty": 1300,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L13",
+   "title": "The bullwhip effect: why small changes in demand become big swings in orders",
+   "areas": [
+    "systems",
+    "operations"
+   ],
+   "sim": "labs/bullwhip.html",
+   "difficulty": 1300,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L14",
+   "title": "Rich or king: what founder control costs",
+   "areas": [
+    "leadership",
+    "fundraising"
+   ],
+   "sim": "labs/rich-king.html",
+   "difficulty": 1300,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L15",
+   "title": "Managerial leverage: spend your hours where they multiply others",
+   "areas": [
+    "management",
+    "leadership"
+   ],
+   "sim": "labs/leverage.html",
+   "difficulty": 1300,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L16",
+   "title": "ZOPA, BATNA and the first number",
+   "areas": [
+    "negotiation",
+    "pricing"
+   ],
+   "sim": "labs/zopa.html",
+   "difficulty": 1300,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L17",
+   "title": "Loss aversion: why losses outweigh gains",
+   "areas": [
+    "behavioural",
+    "pricing"
+   ],
+   "sim": "labs/loss-aversion.html",
+   "difficulty": 1250,
+   "played": false,
+   "grade": null
+  },
+  {
+   "id": "L18",
+   "title": "The curse of knowledge: why your strategy lands less than you think",
+   "areas": [
+    "communication",
+    "leadership"
+   ],
+   "sim": "labs/curse-of-knowledge.html",
    "difficulty": 1250,
    "played": false,
    "grade": null

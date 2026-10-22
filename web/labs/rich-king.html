@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Rich or King Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model (illustrative). Calibrated to one finding: Wasserman (2017) links each extra level of
+   founder control to a 17.1-22.0% lower pre-money valuation. Everything else below is an assumption. ---------- */
+const START = 0.6;          // your stake today, after the seed round
+const KEEP_PER_ROUND = 0.8; // 20% dilution in each of the next two rounds
+const HIRE_COST = 0.93;     // an experienced CEO takes ~7% of the company in options (assumption)
+const COF_EQUITY = 0.88;    // a strong co-founder takes 12% (assumption)
+const COF_LIFT = 1.25;      // and lifts exit value by 25% (assumption, not from Wasserman)
+const STAY = [30, 55, 85];  // chance you are still CEO at exit, by board strength (assumption; Wasserman: about half of founders replaced by year 3-4)
+
+// A control is a position the founder holds: the CEO job (1), the board chair (1), a board majority (1). Score 0-3.
+function calc(p, controls) {
+  const value = p.ceiling * Math.pow(1 - p.penalty / 100, controls) * (p.cof ? COF_LIFT : 1);
+  const stake = START * KEEP_PER_ROUND * KEEP_PER_ROUND * (p.ceo ? 1 : HIRE_COST) * (p.cof ? COF_EQUITY : 1);
+  return { value, stake, euros: stake * value };
+}
+function model(p) {
+  const control = p.board + p.ceo;
+  const c = calc(p, control);
+  const stay = p.ceo ? STAY[p.board] : NaN;
+  const caption = `You hold ${control} of 3 controls. The company is worth about €${fmt(c.value, 0)}m at exit and your ${fmt(c.stake * 100, 0)}% is worth €${fmt(c.euros, 0)}m.` +
+    (p.ceo ? ` Chance you still run it: about ${stay}%.` : ` A hired CEO runs it.`);
+  return { values: { control, stake: c.stake * 100, value: c.value, euros: c.euros, stay }, caption };
+}
+
+/* ---------- The bridge: a ship that grows with the company; amber lights are you, blue lights are others ---------- */
+function scene(k) {
+  const { THREE, box, cyl, sphere, mats, glow, remove } = k;
+  const amber = glow(3.2), crewMat = glow(1.5), blue = mats.cool;
+  const beaconAmber = glow(5);
+  const beaconBlue = new THREE.MeshStandardMaterial({ color: 0x0b1620, emissive: 0x7fb3d6, emissiveIntensity: 4 });
+  let ship = null, beacon = null;
+  k.onTick((dt, t) => {
+    if (!ship) return;
+    ship.position.y = Math.sin(t * 1.1) * 0.12;
+    ship.rotation.z = Math.sin(t * 0.7) * 0.012;
+    if (beacon) beacon.scale.setScalar(1 + Math.sin(t * 3) * 0.08);
+  });
+  return {
+    update(p, r) {
+      if (ship) remove(ship);
+      ship = new THREE.Group(); k.scene.add(ship);
+      const v = r.values, L = Math.min(26, Math.max(10, 7 + v.value / 500 * 14));
+      const x0 = -L / 2;
+      // hull, deck and bow
+      box(L, 1.2, 4.4, mats.dark, 0, 0, 0, ship);
+      box(L - 0.6, 0.15, 4, mats.steel, 0, 1.2, 0, ship);
+      box(2, 1.0, 3, mats.dark, L / 2 + 0.9, 0, 0, ship);
+      // the bridge with the captain's lamp: amber if you are CEO, blue if a hired CEO is in the chair
+      box(3, 2.2, 3.4, mats.steel, x0 + 2, 1.35, 0, ship);
+      box(0.1, 0.7, 2.6, p.ceo ? amber : blue, x0 + 3.55, 2.3, 0, ship);
+      cyl(0.1, 2.4, mats.steel, x0 + 2, 3.55, 0, ship);
+      beacon = sphere(0.45, p.ceo ? beaconAmber : beaconBlue, x0 + 2, 6.2, 0, ship);
+      sphere(0.3, p.ceo ? amber : blue, x0 + 2.3, 3.0, p.cof ? -0.6 : 0, ship);
+      if (p.cof) sphere(0.3, amber, x0 + 2.3, 3.0, 0.6, ship); // a strong co-founder beside the helm
+      // the board table: five seats; amber seats are yours, blue seats are investors and independents
+      const mine = [1, 2, 3][p.board];
+      box(4, 0.3, 1.5, mats.brass, x0 + 6.2, 1.35, 0, ship);
+      for (let i = 0; i < 5; i++) {
+        const sx = x0 + 4.6 + i * 0.8, sz = i % 2 ? 1.25 : -1.25;
+        sphere(i < mine ? 0.3 : 0.24, i < mine ? amber : blue, sx, 2.15, sz, ship);
+      }
+      if (p.board > 0) cyl(0.35, 0.5, mats.brass, x0 + 8.8, 1.35, 0, ship); // you hold the chair
+      // the crew: one light per person; the ship carries more of them as the company grows
+      const first = x0 + 9.5, cols = Math.max(1, Math.floor((L - 10.5) / 0.7)), crew = Math.min(cols * 4, Math.round(6 + v.value / 20));
+      for (let i = 0; i < crew; i++) sphere(0.2, crewMat, first + Math.floor(i / 4) * 0.7, 1.55, ((i % 4) - 1.5) * 0.9, ship);
+      k.hud.innerHTML = `<span>Controls you hold <b>${v.control}</b> of 3</span><span>Board seats yours <b>${mine}</b> of 5</span><span>Crew <b>${crew}</b></span><span>Ship length = company value <b>€${fmt(v.value, 0)}m</b></span>`;
+    },
+  };
+}
+
+const lab = createLab({
+  id: "L14",
+  area: "Leadership",
+  title: "Rich or king",
+  goal: "Decide <b>which controls to keep and which to trade for money</b> as you raise: the board, the CEO job and a strong co-founder.",
+  story: "It is mid-2027 and you are founder-CEO of a venture-scale hardware company. The seed round is done: you own <b>60%</b>, your first co-founder and the early team the rest. Two rounds lie ahead (Series A, Series B), and each lead investor will ask for something: <b>board seats</b>, a say on the <b>CEO</b>, an experienced <b>co-founder</b> with equity. If the company reaches a good exit with you holding no control, it is worth about <b>€400m</b>. Every choice here is yours; nothing needs calculating.",
+  params: [
+    { key: "board", label: "Who runs the board", options: [{ value: 0, label: "Investors lead" }, { value: 1, label: "Balanced, you chair" }, { value: 2, label: "Founders' majority" }], value: 2 },
+    { key: "ceo", label: "Who is CEO", options: [{ value: 1, label: "You stay CEO" }, { value: 0, label: "Experienced CEO hired" }], value: 1 },
+    { key: "cof", label: "Founding team", options: [{ value: 0, label: "Two founders" }, { value: 1, label: "Add a strong co-founder" }], value: 0, hint: "Takes 12% of the company; assumed to lift exit value by 25%" },
+    { key: "penalty", label: "Value lost per control you keep", min: 0, max: 35, step: 0.5, value: 19.5, format: (v) => `${fmt(v, 1)}%`, hint: "Wasserman (2017): 17.1-22.0% lower pre-money valuation per extra level of founder control" },
+    { key: "ceiling", label: "Exit value if you hold no control", min: 200, max: 800, step: 50, value: 400, format: (v) => `€${v}m` },
+  ],
+  metrics: [
+    { key: "control", label: "Controls you hold", unit: "of 3" },
+    { key: "stake", label: "Your stake at exit", unit: "%", format: (v) => fmt(v, 0) },
+    { key: "value", label: "Company value at exit", unit: "€m", format: (v) => fmt(v, 0) },
+    { key: "euros", label: "Your euros at exit", unit: "€m", format: (v) => fmt(v, 0) },
+    { key: "stay", label: "Chance you still run it", unit: "%", format: (v) => (Number.isFinite(v) ? String(v) : "–") },
+  ],
+  model,
+  chart: {
+    title: "Control you keep vs value and your euros",
+    xLabel: "controls you hold (of 3)", yLabel: "€ million at exit",
+    xMin: 0, xMax: 3, yMin: 0,
+    xFormat: (v) => (Number.isInteger(v) ? String(v) : ""),
+    yFormat: (v) => `€${Math.round(v)}m`,
+    series(p) {
+      const line = (pen, key) => [0, 1, 2, 3].map((s) => [s, calc({ ...p, penalty: pen }, s)[key]]);
+      return [
+        { name: "company value at exit", color: "brass", points: line(p.penalty, "value"), dots: true },
+        { name: "your euros", color: "glow", points: line(p.penalty, "euros"), dots: true },
+        { name: "your euros, if each control costs 17.1%", color: "cool", dashed: true, points: line(17.1, "euros") },
+        { name: "your euros, if each control costs 22.0%", color: "dim", dashed: true, points: line(22, "euros") },
+      ];
+    },
+    marker: (p, r) => [r.values.control, r.values.euros],
+    note: "Illustrative model: every control you keep (the CEO job, the board chair, a board majority) cuts company value by the percentage above; the default 19.5% is the middle of Wasserman's 17.1-22.0% range. All else is assumed: 60% start, 20% dilution a round, 7% for a hired CEO, 12% for a co-founder who adds 25% value. His data show an association, not proof of cause.",
+  },
+  stage: { floor: [34, 22], view: 21 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. Be rich",
+      situation: "Your only goal is the most euros in your own pocket at exit. Series A and B are coming and you can choose the whole package up front.",
+      baseline: {},
+      question: "Your call: which package leaves you with the most euros?",
+      options: [
+        { id: "A", label: "Keep the keys", detail: "Founders' board majority, you stay CEO, two founders", params: { board: 2, ceo: 1, cof: 0 } },
+        { id: "B", label: "Share the board, stay CEO", detail: "Lead investor gets seats, you chair, you stay CEO", params: { board: 1, ceo: 1, cof: 0 } },
+        { id: "C", label: "Open everything", detail: "Investors lead the board, an experienced CEO from Series B, a strong co-founder", params: { board: 0, ceo: 0, cof: 1 } },
+        { id: "D", label: "Give the board, keep the CEO job", detail: "Investors lead the board, you stay CEO, two founders", params: { board: 0, ceo: 1, cof: 0 } },
+      ],
+      rankBy: "euros", better: "higher",
+      learning: "<p><b>Open everything wins, and the instinct to keep control is the worst answer.</b> Keeping the keys leaves you about €80m. Sharing the board is worth €99m (1.2×). Giving the board but keeping the CEO job gives €124m (1.5×). Giving up the board, the CEO job and the founder-only team gives about €157m: roughly <b>2×</b> the keep-the-keys route, on a smaller stake (31% instead of 38%).</p><p><b>Why:</b> in Wasserman's data each extra control the founder holds goes with a 17-22% lower valuation, so three controls cost about half the company's value (0.8 × 0.8 × 0.8 ≈ 0.5). Hiring a CEO and adding a co-founder costs 7% and 12% of the equity, far less than the value they free up. <b>Rule of thumb:</b> if wealth is the goal, trade control for resources early. (The co-founder lift is our assumption.)</p>",
+    },
+    {
+      title: "Test 2. Be king",
+      situation: "You decide that running the company matters more to you than a lower euro outcome. You will stay CEO. The question is how much board control to buy with your euros. Today you are at the top: full control.",
+      baseline: {},
+      question: "Your call: the cheapest board deal that still gives you better-than-even odds of running the company at exit?",
+      options: [
+        { id: "A", label: "Founders' majority, you chair", detail: "Hold the board and the CEO job", params: { board: 2, ceo: 1 } },
+        { id: "B", label: "Balanced board, you chair", detail: "Lead investor and an independent sit beside you; you stay CEO", params: { board: 1, ceo: 1 } },
+        { id: "C", label: "Investors lead the board", detail: "You stay CEO, but the investors can replace you", params: { board: 0, ceo: 1 } },
+        { id: "D", label: "Hire a CEO, keep the board majority", detail: "Control from the board, not from the CEO chair", params: { board: 2, ceo: 0 } },
+      ],
+      rankBy: "euros", better: "higher",
+      best: (rows) => rows.filter((r) => r.r.values.stay >= 50).sort((a, b) => b.v - a.v)[0].id,
+      learning: "<p><b>The crown has a price you can size.</b> Hold everything and you keep about €80m of a company worth €209m, against €143m on the pure-money route (without a co-founder): <b>44% less</b>. A balanced board with you in the chair gives €99m (1.2×), investor-led €124m (1.5×). But the CEO job lives at the board's pleasure: our assumed odds of still running the company are about <b>85%</b> with the majority, <b>55%</b> with a balanced board and <b>30%</b> with an investor-led one.</p><p><b>The answer is B:</b> the cheapest deal that still beats a coin flip. Full control (A) buys 30 more points of safety for €19m; investor-led (C) is a coin flip you probably lose. D is the trap: it pays the price of control (€93m) without the one thing a king wants, the CEO chair. <b>Rule of thumb:</b> a king buys the cheapest control that works, not all of it. (The odds are our assumption, tied loosely to the finding that about half of founders are replaced by year 3-4.)</p>",
+    },
+    {
+      title: "Test 3. The middle path",
+      situation: "You will step back as CEO at Series B, because the company needs someone who has scaled hardware. You still want to be rich <b>and</b> keep a real say: at least one control, such as the chair, so nothing big happens without you.",
+      baseline: { ceo: 0, board: 0, cof: 0 },
+      question: "Your call: the most euros while you still hold at least one control?",
+      options: [
+        { id: "A", label: "Investors lead, you stay as CTO", detail: "A seat on the board, no control", params: { board: 0, ceo: 0, cof: 0 } },
+        { id: "B", label: "Balanced board plus a strong co-founder", detail: "You chair, an experienced CEO runs it, a partner shares the product", params: { board: 1, ceo: 0, cof: 1 } },
+        { id: "C", label: "Balanced board, you chair", detail: "Hired CEO, two founders", params: { board: 1, ceo: 0, cof: 0 } },
+        { id: "D", label: "Investors lead plus a strong co-founder", detail: "The richest route, with no control at all", params: { board: 0, ceo: 0, cof: 1 } },
+      ],
+      rankBy: "euros", better: "higher", size: false,
+      best: (rows) => rows.filter((r) => r.r.values.control >= 1).sort((a, b) => b.v - a.v)[0].id,
+      learning: "<p><b>Keep one control, give the rest: B.</b> A hired CEO, you in the chair of a balanced board, and a strong co-founder give about <b>€126m</b>: 80% of the richest route (D, €157m) and 1.6× the keep-the-keys route (€80m). The chair costs the same 19.5% of value any control does (€157m falls to €126m), but it gives you a say on the big calls. The chair without the co-founder is €115m (C), so the co-founder adds about 10% (+25% value, minus 12% equity), if he or she is as good as assumed. A (€143m) and D have no control at all.</p><p><b>Rule of thumb:</b> the middle path is to decide which one control you could not live without, keep that, and trade the rest. Wasserman's own advice is to choose rich or king deliberately instead of drifting into one. (Whether a chair really gives a veto depends on the legal terms: not yet verified here.)</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Control has a price:</b> in Wasserman's data on 6,130 startups, each extra level of founder control (such as the CEO job or the board) goes with a 17-22% lower pre-money valuation. Keeping all three can roughly halve what the company is worth.",
+    "<b>Rich or king is a choice to make before the term sheet.</b> Trading control for resources early left more euros in the model (about 2×), even on a smaller stake.",
+    "<b>A king buys the cheapest control that works</b>: the CEO job without the board behind you is a coin flip, and a board majority without the CEO chair pays for control but does not buy the job.",
+    "<b>The middle path:</b> keep the one control you need (for example the chair), hand over the rest, and add a strong co-founder only if he or she lifts value by more than the 12% equity costs.",
+  ],
+});
+</script>
+</body>
+</html>

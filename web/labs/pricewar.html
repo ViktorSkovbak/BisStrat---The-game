@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Price War Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model: a repeated price game, played quarter by quarter ---------- */
+/* MODEL START */
+const PAY = { R: 90, T: 150, P: 30, S: 0 }; // EUR k per quarter; Axelrod's 5/3/1/0 pattern scaled by 30
+const MAXQ = 60;
+const RIVAL_Q = { rec: 1, opp: 0, mix: 0.5 }; // share of rivals that copy your last move
+
+function payoffs(d) { // d = differentiation: undercutting wins less, being undercut costs less
+  return { R: PAY.R, T: PAY.T - 80 * d, P: PAY.P + 20 * d, S: PAY.S + 40 * d };
+}
+
+function vMove(policy, t, V, R, push, last) {
+  if (t < push) return 1;                   // opening price push
+  switch (policy) {
+    case "high": return 0;
+    case "low": return 1;
+    case "late": return last ? 1 : 0;       // cut only in the final quarter
+    case "grim": return R.slice(0, t).includes(1) ? 1 : 0;
+    case "tft": return t ? R[t - 1] : 0;
+    default: // "forgive": match a cut once, then back to high and ignore the echo
+      return t && R[t - 1] === 1 && V[t - 1] === 0 && !(t >= 2 && V[t - 2] === 1) ? 1 : 0;
+  }
+}
+
+function rMove(kind, t, V, probe, last) {
+  if (last) return 1;                       // clears stock in the final quarter
+  if (kind === "low") return 1;             // always undercuts
+  if (t === 0) return kind === "opp" || probe ? 1 : 0;
+  if (kind === "opp" && !V.slice(0, t).includes(1)) return 1; // keeps cutting until matched
+  return V[t - 1];
+}
+
+function play(p, kind) {
+  const H = p.end > 0 ? Math.min(p.end, MAXQ) : MAXQ;
+  const pay = payoffs(p.diff), cost = 10 * p.diff, stick = p.push ? 0.15 : 0;
+  const V = [], R = [], pv = [], pr = [];
+  let profit = 0, rivalProfit = 0, peace = 0, war = 0, life = 0;
+  for (let t = 0; t < H; t++) {
+    const last = p.end > 0 && t === H - 1;
+    const v = vMove(p.policy, t, V, R, p.push, last), r = rMove(kind, t, V, p.probe, last);
+    V.push(v); R.push(r);
+    const mine = v ? (r ? pay.P : pay.T) : (r ? pay.S : pay.R);
+    const theirs = r ? (v ? pay.P : pay.T) : (v ? pay.S : pay.R);
+    const m = p.push && t >= p.push ? 1 + stick : 1; // customers won in the push stay
+    const w = Math.pow(p.cont, t);
+    pv.push(mine * m - cost); pr.push(theirs);
+    profit += w * (mine * m - cost); rivalProfit += w * theirs;
+    life += w; if (!v && !r) peace += w; if (v && r) war += w;
+  }
+  return { profit, rivalProfit, peace, war, life, V, R, pv, pr };
+}
+
+function model(p) {
+  let runs, cuts = null; // runs: [[weight, run], ...]
+  if (p.rival === "calc") { // a calculating rival cuts only if that pays, given what it believes about you
+    const soft = { ...p, policy: "high", push: 0 }, b = p.belief;
+    const worth = (kind) => b * play(p, kind).rivalProfit + (1 - b) * play(soft, kind).rivalProfit;
+    cuts = worth("low") > worth("rec");
+    runs = [[1, play(p, cuts ? "low" : "rec")]];
+  } else {
+    const q = RIVAL_Q[p.rival];
+    runs = [[q, play(p, "rec")], [1 - q, play(p, "opp")]].filter((x) => x[0] > 0);
+  }
+  const mix = (k) => runs.reduce((s, [w, r]) => s + w * r[k], 0);
+  const life = mix("life");
+  const likely = runs.reduce((a, b) => (b[0] > a[0] ? b : a))[1];
+  return {
+    values: { profit: mix("profit"), rival: mix("rivalProfit"), peace: (100 * mix("peace")) / life, war: (100 * mix("war")) / life, life },
+    path: likely, cuts,
+  };
+}
+
+const lab_model = (p) => {
+  const r = model(p), v = r.values;
+  const choice = p.rival === "calc" ? (r.cuts ? " The calculating rival decides that cutting pays." : " The calculating rival decides that cutting does not pay.") : "";
+  r.caption = `Over the game you expect about €${Math.round(v.profit)}k. Both prices are high ${Math.round(v.peace)}% of the time and both low ${Math.round(v.war)}% of the time.${choice}`;
+  return r;
+};
+
+/* ---------- The scene: two factories, price beacons, customers and profit gauges ---------- */
+function scene(k) {
+  const { THREE, box, cyl, sphere, mats, glow, onTick, hud } = k;
+  const gold = glow(3.2), red = mats.jam, STEP = 0.9, MAXN = 20;
+  const sides = [-9, 9].map((x, i) => {
+    const f = i ? -1 : 1; // direction towards the middle
+    box(7, 3.4, 6, mats.dark, x, 0, 0);
+    box(7.4, 0.4, 6.4, mats.steel, x, 3.4, 0);
+    cyl(0.5, 3, mats.steel, x - f * 2, 3.8, -1.5);
+    const lights = [-2.4, -0.8, 0.8, 2.4].map((z) => sphere(0.3, glow(0.3), x + f * 3.6, 1.8, z));
+    cyl(0.15, 5, mats.steel, x + f * 5.6, 0, -4.5);
+    const beacon = sphere(0.9, gold, x + f * 5.6, 5.9, -4.5);
+    box(1.4, 0.2, 1.4, mats.dark, x - f * 1, 0, 5.5);
+    const bar = box(0.8, 1, 0.8, i ? mats.steel : mats.brass, x - f * 1, 0.2, 5.5);
+    return { x, f, lights, beacon, bar, h: 0.1, cum: 0 };
+  });
+  const crateGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+  const crowd = Array.from({ length: 10 }, (_, i) => {
+    const m = new THREE.Mesh(crateGeo, mats.brass); m.castShadow = true; k.scene.add(m);
+    m.position.set((i % 5 - 2) * 0.8, 0.25, i * 1.5 - 7); return m;
+  });
+  let P = null, idx = 0, acc = STEP, N = 1;
+
+  function step() {
+    idx = (idx + 1) % N;
+    const now = [P.V[idx], P.R[idx]], pay = [P.pv[idx], P.pr[idx]];
+    sides.forEach((s, i) => {
+      if (idx === 0) s.cum = 0;
+      s.cum += pay[i];
+      s.beacon.material = now[i] ? red : gold;
+      s.lights.forEach((l) => { l.material.emissiveIntensity = 0.25 + 3.2 * Math.max(0, pay[i]) / 150; });
+    });
+    hud.innerHTML = `<span>Quarter <b>${idx + 1}</b></span><span>You <b>${now[0] ? "LOW" : "HIGH"}</b></span><span>Rival <b>${now[1] ? "LOW" : "HIGH"}</b></span><span>Profit so far <b>€${Math.round(sides[0].cum)}k</b></span><span>Rival <b>€${Math.round(sides[1].cum)}k</b></span>`;
+  }
+  onTick((dt) => {
+    if (!P) return;
+    acc += dt;
+    if (acc >= STEP) { acc = 0; step(); }
+    sides.forEach((s) => {
+      s.h += (Math.max(0.1, 7 * s.cum / (95 * N)) - s.h) * Math.min(1, dt * 5);
+      s.bar.scale.y = s.h; s.bar.position.y = 0.2 + s.h / 2;
+    });
+    const v = P.V[idx], r = P.R[idx];
+    crowd.forEach((c, i) => { // customers walk to the cheaper factory; split when prices match
+      const to = v === r ? (i % 2 ? sides[1] : sides[0]) : (v ? sides[0] : sides[1]);
+      const tx = to.x + to.f * 3.9;
+      c.position.x += Math.sign(tx - c.position.x) * dt * 5;
+      if (Math.abs(tx - c.position.x) < 0.3) c.position.set((i % 5 - 2) * 0.8, 0.25, i * 1.5 - 7);
+    });
+  });
+  return {
+    update(p, result) {
+      P = result.path; N = Math.min(P.V.length, MAXN); idx = N - 1; acc = STEP;
+      sides.forEach((s) => (s.cum = 0));
+    },
+  };
+}
+
+const eur = (v) => `€${Math.round(v).toLocaleString("en-US")}k`;
+const pct = (v) => `${Math.round(v * 100)}%`;
+
+const lab = createLab({
+  id: "L06",
+  area: "Competitive dynamics & game theory",
+  title: "Price wars and the repeated game",
+  goal: "Decide <b>when to hold your price, when to hit back, and how to make a price war not worth starting</b>, against one well-funded rival you will keep meeting.",
+  story: "It is 2027. Your company has launched its first product, a piece of industrial hardware, and sells to the same handful of pilot and early customers as <b>one well-funded rival</b>. Every quarter each of you sets a price, <b>high</b> (the normal list price) or <b>low</b> (undercut). Both high: <b>€90k</b> profit each. You undercut alone: you take the customers, <b>€150k</b>, and the rival gets <b>€0</b> (and the same the other way round). Both low: <b>€30k</b> each. Each quarter there is a <b>90% chance</b> the contest goes on: on average 10 quarters, about 2.5 years.",
+  params: [
+    { key: "policy", label: "Your pricing policy", options: [
+      { value: "high", label: "Always hold high" }, { value: "low", label: "Always undercut" }, { value: "late", label: "Cut in the last quarter" },
+      { value: "grim", label: "Match a cut for good" }, { value: "tft", label: "Copy their last move" }, { value: "forgive", label: "Match once, then forgive" }], value: "tft",
+      hint: "Copying their last move is tit-for-tat. Matching once, then forgiving, never answers the echo of its own answer." },
+    { key: "rival", label: "Your rival", options: [
+      { value: "rec", label: "Copies your last move" }, { value: "opp", label: "Cuts until you match" }, { value: "mix", label: "50/50 mix of the two" }, { value: "calc", label: "Calculating: cuts if it pays" }], value: "rec" },
+    { key: "probe", label: "Rival's first move", options: [{ value: 0, label: "Holds its price" }, { value: 1, label: "Cuts its price" }], value: 0 },
+    { key: "belief", label: "Rival's belief that you will hit back", min: 0, max: 1, step: 0.05, value: 0.3, format: pct, hint: "Only used by a calculating rival." },
+    { key: "cont", label: "Chance the contest goes on each quarter", min: 0.1, max: 0.95, step: 0.01, value: 0.9, format: pct, hint: "The shadow of the future: how much tomorrow matters today." },
+    { key: "end", label: "Market ends", options: [{ value: 0, label: "No fixed end" }, { value: 2, label: "In 2 quarters" }, { value: 4, label: "In 4 quarters" }], value: 0 },
+    { key: "diff", label: "Your product", options: [{ value: 0, label: "Same as the rival's" }, { value: 0.3, label: "A little different" }, { value: 0.8, label: "Clearly different" }], value: 0, hint: "Differentiation costs €10k a quarter at full strength; the rival wins fewer customers by cutting." },
+    { key: "push", label: "Opening move", options: [{ value: 0, label: "Normal price" }, { value: 4, label: "Four-quarter price push" }], value: 0, hint: "The push wins customers who then stay: +15% on your profit afterwards." },
+  ],
+  metrics: [
+    { key: "profit", label: "Your expected profit", format: (v) => eur(v) },
+    { key: "rival", label: "Rival's expected profit", format: (v) => eur(v) },
+    { key: "peace", label: "Both prices high", unit: "% of time", format: (v) => v.toFixed(0) },
+    { key: "war", label: "Price war", unit: "% of time", format: (v) => v.toFixed(0) },
+    { key: "life", label: "Expected quarters", unit: "quarters", format: (v) => v.toFixed(1) },
+  ],
+  model: lab_model,
+  chart: {
+    title: "Profit vs the shadow of the future",
+    xLabel: "chance the contest goes on each quarter (%)", yLabel: "your expected profit (€k)",
+    xMin: 10, xMax: 95,
+    xFormat: (v) => `${Math.round(v)}%`, yFormat: (v) => `${Math.round(v).toLocaleString("en-US")}`,
+    series(p) {
+      const mine = [], cut = [];
+      for (let c = 10; c <= 95; c += 2.5) {
+        mine.push([c, model({ ...p, cont: c / 100 }).values.profit]);
+        cut.push([c, model({ ...p, cont: c / 100, policy: "low", push: 0 }).values.profit]);
+      }
+      return [{ name: "your policy", color: "brass", points: mine }, { name: "always undercut", color: "jam", dashed: true, points: cut }];
+    },
+    marker: (p, r) => [p.cont * 100, r.values.profit],
+    note: "Illustrative model: the payoffs follow the 5/3/1/0 pattern of Axelrod's tournaments, scaled to €k a quarter (150, 90, 30, 0). The rival types, the size of a signal's effect on the rival's beliefs and the +15% from a price push are assumptions of this page, not measurements. With the default settings (a rival that copies you), undercutting wins when the contest is short and loses when it is long; the lines cross near 50%.",
+  },
+  stage: { floor: [34, 22], view: 21 },
+  scene,
+  tests: [
+    {
+      title: "Test 1. The rival cuts once",
+      situation: "This quarter your rival cut its price. You cannot tell whether it is a one-off test or the start of a campaign (assume even odds). Your price is still high. How do you answer?",
+      baseline: { policy: "high", rival: "mix", probe: 1, cont: 0.9 },
+      options: [
+        { id: "A", label: "Copy its every move", detail: "Strict tit-for-tat: whatever it did last quarter, you do now", params: { policy: "tft" } },
+        { id: "B", label: "Ignore it", detail: "Hold your price and wait", params: { policy: "high" } },
+        { id: "C", label: "Match the cut and stay low until it backs off", detail: "Hit back, and hold the grudge", params: { policy: "grim" } },
+        { id: "D", label: "Match for one quarter, then go back to high", detail: "Hit back once, then forgive", params: { policy: "forgive" } },
+      ],
+      rankBy: "profit", better: "higher",
+      learning: "<p><b>Hit back once, then go back to high.</b> Expected profit over the game: match once and forgive <b>€735k</b>; copy every move €489k; ignore it €404k; match for good €323k. Against today's \"ignore\", the forgiving answer is about <b>1.8×</b> better; copying is 1.2× and the grudge is worse than doing nothing (0.8×).</p><p><b>Why.</b> Ignoring only works against a rival that copies you (808 against that kind, 0 against one that keeps cutting). The grudge locks both of you at €30k a quarter for good. Strict copying can bounce a cut back and forth, or lock into war against a rival that keeps cutting. One answer, then back to high, ends both traps.</p><p><b>Rule of thumb:</b> start nice, answer a cut at once and in proportion, then forgive. It stops mattering when the contest is very short: at a 50% chance of going on, all four answers are within €25k.</p>",
+    },
+    {
+      title: "Test 2. The market is ending",
+      situation: "A technology switch will end this market in <b>2 quarters</b>. So far you and the rival have both held high. The rival copies your last move, but clears its stock in the final quarter. Does the truce still pay?",
+      baseline: { policy: "high", rival: "rec", probe: 0, end: 2, cont: 0.9 },
+      options: [
+        { id: "A", label: "Cut now and stay low", detail: "Take the customers while the rival still holds high", params: { policy: "low" } },
+        { id: "B", label: "Hold the truce to the end", detail: "Keep the price high in both quarters", params: { policy: "high" } },
+        { id: "C", label: "Cut in the final quarter only", detail: "Clear your stock with the rival", params: { policy: "late" } },
+      ],
+      rankBy: "profit", better: "higher",
+      learning: "<p><b>The truce stops paying when the future disappears.</b> Cut now and stay low: <b>€177k</b>. Cut in the final quarter only: €117k. Hold the truce: €90k. So cutting now is about <b>2×</b> holding the truce, and holding the truce is the worst of the three (you earn €90k in quarter 1 and €0 in the last, when the rival cuts).</p><p><b>Why.</b> Cooperation is held up by the fear of retaliation next quarter. With no next quarter, a cut costs nothing, and a rival that knows the end will cut first. Even if the rival cuts from day one, cutting now still wins (€57k against €0). The unravelling starts at the last round and works backwards.</p><p><b>Rule of thumb:</b> when you know the end date, expect the rival to cut before it. Real customers remember and you may meet the rival in the next market, so end-games are softer than in the model.</p>",
+    },
+    {
+      title: "Test 3. How to avoid the war",
+      situation: "A calculating rival is about to enter your accounts and will undercut if it pays. It believes there is only a 30% chance you would hit back. You expect to meet it for about 2.5 years. Your policy is to copy its last move. Which move heads off the price war?",
+      baseline: { policy: "tft", rival: "calc", belief: 0.3, probe: 0, cont: 0.9, end: 0 },
+      options: [
+        { id: "A", label: "Win share fast", detail: "Four quarters of low prices to lock in customers before the rival is established (+15% volume afterwards)", params: { push: 4 } },
+        { id: "B", label: "Signal clearly", detail: "Publish prices and a stated rule to match any cut; the rival's belief rises from 30% to 50%", params: { belief: 0.5 } },
+        { id: "C", label: "Differentiate clearly", detail: "Features and service customers pay for; costs €8k a quarter; undercutting wins the rival far less", params: { diff: 0.8 } },
+        { id: "D", label: "Differentiate a little", detail: "Costs €3k a quarter; a modest shift in what undercutting wins", params: { diff: 0.3 } },
+      ],
+      rankBy: "profit", better: "higher",
+      learning: "<p><b>Change what a price cut is worth: differentiate clearly.</b> Expected profit: differentiate clearly <b>€819k</b>; win share fast €329k; differentiate a little €305k; signal at 50% belief €269k, no better than doing nothing (€269k). Clear differentiation is about <b>3×</b> the war you get otherwise; the other three are 1.2× or less.</p><p><b>Why.</b> The rival cuts only when cutting pays. With clear differentiation a cut wins it about €86k, less than the €90k of holding high, so it never starts. The rival also has to <i>believe</i> your threat: it cuts unless its belief that you hit back is above about 56%. At 60%, signalling would give €898k (3.3×) for nothing, which is why it is worth trying; but this page assumes a 50% effect, and in the Perth petrol market studied by Byrne and de Roos the shift to coordination took about three years. Half-measures fail (differentiation has to reach roughly two-thirds of \"clearly different\" before the rival stops cutting). Buying share with a price war just starts the war you wanted to avoid.</p><p><b>Rule of thumb:</b> first change the payoffs (make cutting pay less), then add a credible, public response rule. Do not talk prices with the rival: that can be illegal, so take legal advice (not yet verified).</p>",
+    },
+  ],
+  takeaways: [
+    "<b>The future is what holds a truce together.</b> Against a rival that answers in kind, holding high beats undercutting once the chance of meeting again next quarter is above roughly 50-67% (in this model, depending on the rival's tactic). When the end is known, the truce unravels from the last round backwards.",
+    "<b>Be nice, hit back once, then forgive, and be clear.</b> Ignoring a cut invites the next one; holding a grudge locks in a price war; one proportionate answer, then back to high, keeps the peace.",
+    "<b>Know when the future is short.</b> A known end date, a runway that may run out or a one-off tender makes undercutting the rational move for both sides; expect the rival to cut first.",
+    "<b>Avoid the war by changing the payoffs.</b> Differentiate until a cut earns the rival less than holding high; signal credibly where it will be believed; do not buy share with a price war against a rival with deeper pockets.",
+  ],
+});
+</script>
+</body>
+</html>

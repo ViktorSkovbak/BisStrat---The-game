@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Calibration Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../kit/lab.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+import { createLab, fmt } from "../kit/lab.js";
+
+/* ---------- The model: expected Brier score over many forecasts ---------- */
+// Each question has a true chance c. The forecaster sees a noisy gut read g = c + noise,
+// states a probability q, and is scored (q - outcome)^2 on average: c(1-q)^2 + (1-c)q^2.
+const Z = [-1.593, -0.967, -0.589, -0.282, 0, 0.282, 0.589, 0.967, 1.593]; // equal-weight normal quantiles
+const SPREAD_K = [0, 12, 4]; // how different the questions are: 0 = all alike, else Beta concentration
+const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+
+function chances(m, k) { // true chance of each kind of question: [chance, weight]
+  if (!k) return [[m, 1]];
+  const out = []; let tot = 0;
+  for (let i = 0; i < 100; i++) {
+    const c = (i + 0.5) / 100;
+    const w = Math.exp((m * k - 1) * Math.log(c) + ((1 - m) * k - 1) * Math.log(1 - c) + 20);
+    out.push([c, w]); tot += w;
+  }
+  return out.map(([c, w]) => [c, w / tot]);
+}
+
+function model(p) {
+  const pg = chances(p.base / 100, SPREAD_K[p.spread]);
+  const m = pg.reduce((s, [c, w]) => s + c * w, 0);
+  const vp = pg.reduce((s, [c, w]) => s + (c - m) * (c - m) * w, 0);
+  const sd = p.insight / 100;
+  const shrink = vp / (vp + sd * sd + 1e-12); // how far a sensible forecaster moves off the base rate
+  const bins = Array.from({ length: 10 }, () => ({ w: 0, q: 0, hit: 0 }));
+  let brier = 0;
+  for (const [c, wc] of pg) for (const z of Z) {
+    const g = c + sd * z, w = wc / Z.length;
+    let q = p.habit === 0 ? (g > 0.5 ? 0.9 : 0.1)
+      : p.habit === 1 ? 0.5
+      : p.habit === 2 ? clamp(m + shrink * (g - m), 0.01, 0.99)
+      : clamp(p.stated / 100, 0.01, 0.99);
+    if (q !== 0.5) q = clamp(q + (Math.sign(q - 0.5) * p.push) / 100, 0.01, 0.99);
+    brier += w * (c * (1 - q) * (1 - q) + (1 - c) * q * q);
+    const b = bins[Math.min(9, Math.floor(q * 10))];
+    b.w += w; b.q += w * q; b.hit += w * c;
+  }
+  const used = bins.map((b, idx) => ({ idx, w: b.w, q: b.q / b.w, hit: b.hit / b.w })).filter((b) => b.w > 1e-9);
+  const gap = used.reduce((s, b) => s + b.w * Math.abs(b.q - b.hit), 0) * 100;
+  const edge = ((0.25 - brier) / 0.25) * 100;
+  const caption = `Brier score ${brier.toFixed(3)}: ${edge >= 0 ? `${edge.toFixed(0)}% better` : `${(-edge).toFixed(0)}% worse`} than saying 50% every time. On average a stated chance is ${gap.toFixed(0)} points away from how often it really happens.`;
+  return { values: { brier, edge, gap }, caption, bins: used };
+}
+
+/* ---------- The observatory: forecasts fall from the dome into probability bins ---------- */
+function scene(k) {
+  const { THREE, box, cyl, sphere, glow, mats, remove } = k;
+  const X = (i) => -3 + i * 1.75, ZB = 4, H = 0.4;
+  cyl(4.2, 2.4, mats.steel, -12, 0, -4);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(4.2, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0x5b6774, metalness: 0.8, roughness: 0.35, transparent: true, opacity: 0.55 }));
+  dome.position.set(-12, 2.4, -4); k.scene.add(dome);
+  const eye = sphere(0.5, glow(2.6), -12, 6.9, -4);
+  const lit = glow(1.8), dark = mats.dark;
+  const cols = Array.from({ length: 10 }, (_, i) => {
+    box(1.3, 0.12, 1.3, mats.belt, X(i), 0, ZB);
+    const mark = box(1.55, 0.07, 1.55, mats.cool, X(i), 0, ZB); mark.visible = false;
+    const cubes = Array.from({ length: 10 }, () => { const c = new THREE.Mesh(new THREE.BoxGeometry(1, H, 1), dark); c.castShadow = true; c.visible = false; k.scene.add(c); return c; });
+    return { hist: [], cubes, mark, w: 0, q: 0, hit: 0 };
+  });
+  let bins = [], orbs = [], timer = 0, n = 0, happened = 0, sq = 0;
+
+  function paint(col, i) {
+    const sorted = [...col.hist].sort((a, b) => b - a); // lit cubes at the bottom
+    col.cubes.forEach((c, j) => {
+      c.visible = j < sorted.length;
+      if (c.visible) { c.material = sorted[j] ? lit : dark; c.position.set(X(i), 0.12 + H * j + H / 2, ZB); }
+    });
+  }
+  function reset() {
+    orbs.forEach((o) => remove(o.mesh)); orbs = []; n = happened = sq = 0;
+    cols.forEach((col, i) => {
+      const b = bins.find((x) => x.idx === i);
+      col.w = b ? b.w : 0; col.q = b ? b.q : 0; col.hit = b ? b.hit : 0;
+      const cnt = b ? clamp(Math.round(b.w * 60), 1, 10) : 0;
+      col.hist = Array.from({ length: cnt }, (_, j) => (j < Math.round(col.hit * cnt) ? 1 : 0));
+      col.mark.visible = !!b;
+      if (b) col.mark.position.y = 0.12 + H * 10 * b.q + 0.035; // where the column should fill to if calibrated
+      paint(col, i);
+    });
+  }
+  k.onTick((dt) => {
+    timer += dt;
+    if (timer > 0.4 && bins.length && orbs.length < 6) {
+      timer = 0;
+      let r = Math.random(), pick = bins[bins.length - 1];
+      for (const b of bins) { r -= b.w; if (r <= 0) { pick = b; break; } }
+      const mesh = sphere(0.3, glow(3), -12, 6.9, -4);
+      orbs.push({ mesh, t: 0, i: pick.idx, q: pick.q, ok: Math.random() < pick.hit ? 1 : 0 });
+    }
+    orbs = orbs.filter((o) => {
+      o.t += dt / 0.9;
+      const col = cols[o.i], top = 0.12 + H * Math.min(col.hist.length, 10) + 0.4, e = Math.min(1, o.t);
+      o.mesh.position.set(-12 + (X(o.i) + 12) * e, 6.9 + (top - 6.9) * e + Math.sin(Math.PI * e) * 3, -4 + (ZB + 4) * e);
+      if (o.t < 1) return true;
+      remove(o.mesh);
+      col.hist.push(o.ok); if (col.hist.length > 10) col.hist.shift();
+      n++; happened += o.ok; sq += (o.q - o.ok) ** 2;
+      paint(col, o.i);
+      return false;
+    });
+    eye.material.emissiveIntensity = 1.8 + Math.sin(performance.now() / 300);
+    k.hud.innerHTML = `<span>Forecasts <b>${n}</b></span><span>Happened <b>${happened}</b></span><span>Brier so far <b>${n ? (sq / n).toFixed(3) : "–"}</b></span><span>Left to right: 0% to 100%. Lit = it happened.</span>`;
+  });
+  return { update(p, r) { bins = r.bins; reset(); } };
+}
+
+const lab = createLab({
+  id: "L05",
+  area: "Decisions under uncertainty & forecasting",
+  title: "Calibration and the outside view",
+  goal: "Decide <b>what probability to put on a call</b>: start from how often that kind of thing happens, adjust a little for what you know, and never sound surer than your record.",
+  story: "It is 2027 and you are founding a hardware company. In a year you will make <b>dozens of calls with a yes or no outcome</b>: does this pilot convert, does this grant come through, does this engineer accept. Say <b>about 40%</b> of such things happen. You start a weekly <b>/forecast</b> habit: every call gets a number, and every outcome is scored with the <b>Brier score</b> (the average squared miss; <b>0 is perfect, 0.25 is what saying 50% every time scores</b>). Lower is better.",
+  params: [
+    { key: "habit", label: "Forecasting habit", options: [{ value: 0, label: "Bold: 90% or 10%" }, { value: 1, label: "Timid: 50%" }, { value: 2, label: "Base rate, then adjust" }, { value: 3, label: "One fixed number" }], value: 2, hint: "Bold follows the gut. Base rate starts from how often it happens and moves with the evidence." },
+    { key: "stated", label: "The fixed number", min: 1, max: 99, step: 1, value: 40, format: (v) => `${v}%`, hint: "Only used by 'One fixed number'" },
+    { key: "base", label: "How often it happens", min: 2, max: 90, step: 1, value: 40, format: (v) => `${v}%`, hint: "The base rate of this kind of question" },
+    { key: "spread", label: "How different the questions are", options: [{ value: 0, label: "All alike" }, { value: 1, label: "Mixed" }, { value: 2, label: "Very mixed" }], value: 2, hint: "Very mixed: some calls are near certain, some near hopeless" },
+    { key: "insight", label: "How noisy your gut read is", options: [{ value: 5, label: "Sharp" }, { value: 15, label: "Typical" }, { value: 30, label: "Mostly noise" }], value: 15, hint: "Typical error of your inside view, in percentage points" },
+    { key: "push", label: "Too sure by", min: 0, max: 30, step: 1, value: 0, format: (v) => `${v} pts`, hint: "Points every call is pushed away from 50%" },
+  ],
+  metrics: [
+    { key: "brier", label: "Brier score (lower is better)", format: (v) => v.toFixed(3) },
+    { key: "edge", label: "Edge over saying 50%", unit: "%", format: (v) => v.toFixed(0) },
+    { key: "gap", label: "Stated vs real chance", unit: "pts apart", format: (v) => v.toFixed(0) },
+  ],
+  model,
+  chart: {
+    title: "Calibration curve",
+    xLabel: "chance you stated (%)", yLabel: "how often it happened (%)",
+    xMin: 0, xMax: 100, yMin: 0, yMax: 100,
+    xFormat: (v) => `${Math.round(v)}`, yFormat: (v) => `${Math.round(v)}`,
+    series(p, r) {
+      const pts = r.bins.map((b) => [b.q * 100, b.hit * 100]);
+      return [
+        { name: "perfectly calibrated", color: "dim", dashed: true, width: 1.5, points: [[0, 0], [100, 100]] },
+        { name: "your forecasts", color: "brass", points: pts },
+        { color: "glow", dots: true, points: pts },
+      ];
+    },
+    note: "Illustrative model: a stylised world where the true chance of each call varies, and you see only a noisy gut read of it. Dots are groups of calls you gave the same chance; on the dashed line, 70% calls happen 70% of the time. The base rate for grants (about 6-7%) comes from published EIC Accelerator counts; the rest is calibrated to nothing but the logic of the Brier score.",
+  },
+  stage: { floor: [34, 22], view: 21, target: [0, 0, 0] },
+  scene,
+  tests: [
+    {
+      title: "Test 1. Which forecaster wins?",
+      situation: "Three friends forecast the same 60 business questions this year (pilots, grants, hires). About 40% of such things happen, and the questions differ a lot: some are near sure, some near hopeless. <b>You</b> have been going with your gut and saying 90% or 10%. One friend says 50% to everything. One <b>starts from how often it happens and adjusts</b> for what she knows. Who has the best Brier score?",
+      question: "Your call: which habit scores best?",
+      baseline: { habit: 0 },
+      options: [
+        { id: "A", label: "Bold: 90% or 10%, by gut", detail: "Decisive. Your habit today.", params: { habit: 0 } },
+        { id: "B", label: "Timid: 50% on everything", detail: "Never far wrong", params: { habit: 1 } },
+        { id: "C", label: "Start at the base rate, then adjust", detail: "Starts at 40%, moves with the evidence", params: { habit: 2 } },
+        { id: "D", label: "Always say the base rate: 40%", detail: "Never adjust", params: { habit: 3, stated: 40 } },
+      ],
+      rankBy: "brier", better: "lower", size: false,
+      learning: "<p><b>Start from the base rate and adjust: Brier 0.206, about 18% better than a coin-flip forecaster.</b> The bold forecaster scores <b>0.268, worse than saying 50% every time</b> (0.250): when you say 90%, it happens only about 61% of the time, and your 10% calls happen about 29% of the time. Always quoting the base rate scores 0.240 (about 4% better than a coin flip), so the base rate is a start, not the answer: the adjustment is where the skill is.</p><p><b>The rule:</b> start with how often this kind of thing happens (the outside view, a <i>reference class</i>), then move in proportion to how well your evidence has predicted before. Your gut is the adjustment, never the starting point. Boldness feels like skill but is paid for in squared misses.</p>",
+    },
+    {
+      title: "Test 2. The grant",
+      situation: "You submit a full application to the <b>EIC Accelerator</b>, the EU's grant-and-equity programme for deep-tech start-ups. Of the <b>923 full applications</b> at the October 2025 cut-off, <b>61</b> were selected (about 6.6%); the October 2024 round selected <b>71 of 1,211</b> (about 5.9%). Your application is strong and you <i>feel</i> 65%. Assume a well-prepared application really has about a <b>10%</b> chance (an assumption, not a published figure). Which number do you write in your forecast log?",
+      question: "Your call: what probability do you log?",
+      baseline: { base: 10, spread: 0, habit: 3, stated: 65 },
+      options: [
+        { id: "A", label: "65%", detail: "What it feels like from the inside", params: { stated: 65 } },
+        { id: "B", label: "35%", detail: "Split the difference between gut and statistics", params: { stated: 35 } },
+        { id: "C", label: "10%", detail: "Start at the programme's 6-7%, add a few points for strong preparation", params: { stated: 10 } },
+        { id: "D", label: "3%", detail: "Be humble: most applicants fail", params: { stated: 3 } },
+      ],
+      rankBy: "brier", better: "lower",
+      learning: "<p><b>Log 10%.</b> Brier scores: 65% gives <b>0.393</b>, 35% gives 0.153, 10% gives <b>0.090</b>, 3% gives 0.095. So your gut number is about <b>4.4× worse</b> than the base-rate answer, and splitting the difference (35%) is still about <b>2.6× worse</b>. A 3% answer is nearly as good as 10% on this score (about 1.05× worse), because at low chances small misses cost little: what hurts is being tens of points off.</p><p><b>The rule:</b> the inside view (a strong team, a good story) should move you a few points from the reference-class rate, not fifty. Every applicant feels strong; that is why the rate is 6-7%. Plan the money and the runway on 10%, not 65%.</p>",
+    },
+    {
+      title: "Test 3. Too sure by 20 points",
+      situation: "After 80 resolved calls, your forecast log shows a pattern: your <b>confident calls come true about 20 points less often than you say</b> (you say 90%, it happens about 70%). You are otherwise a sound forecaster who starts from base rates. A co-founder says: <i>\"Investors like conviction.\"</i> What do you do with your numbers?",
+      question: "Your call: which fix keeps the most of your edge?",
+      baseline: { habit: 2, push: 20 },
+      options: [
+        { id: "A", label: "Keep stating them: conviction sells", detail: "Still 20 points too sure", params: { push: 20 } },
+        { id: "B", label: "Trim every call by 10 points", detail: "Half the fix", params: { push: 10 } },
+        { id: "C", label: "Say what the record says", detail: "70% when your 90%-feeling calls come true 70%", params: { push: 0 } },
+        { id: "D", label: "Go safe: 50% on everything", detail: "Never too sure", params: { habit: 1, push: 0 } },
+      ],
+      rankBy: "edge", better: "higher",
+      learning: "<p><b>Say what the record says.</b> Calibrated, your edge over a coin-flip forecaster is about <b>18%</b> (Brier 0.206). Being 20 points too sure cuts it to about <b>5%</b> (Brier 0.237): you throw away roughly <b>70% of your edge</b>, a <b>3.5× smaller edge</b>. Trimming by 10 points keeps about 15% (Brier 0.213), roughly 2.9× the edge of today. Going to 50% everywhere has no edge at all (0.250), so it is worse than staying overconfident.</p><p><b>The rule:</b> miss costs grow with the square, so confident misses are what hurt. Pad nothing, and fix the number from your own record (plot your calls in bins, as in the curve above). Show investors conviction in your actions, but keep the probability in your log honest.</p>",
+    },
+  ],
+  takeaways: [
+    "<b>Start from the base rate, then adjust.</b> A grant programme that funds about 6-7% of full applications (EIC, 2024-25) tells you more than how strong your application feels: the gut is the adjustment, not the starting point.",
+    "<b>Boldness is not skill.</b> Saying 90% or 10% on gut scored worse than saying 50% every time (0.268 vs 0.250), while base rate plus adjustment scored 0.206.",
+    "<b>Calibration means your 70% calls happen about 70% of the time.</b> Being 20 points too sure removed about 70% of the edge, because the Brier score punishes confident misses in squares.",
+    "<b>Keep score every week.</b> Log each call as a number, resolve it, and plot your record in bins; training, teaming and tracking raised accuracy in the forecasting tournaments (Mellers et al. 2014).",
+  ],
+});
+</script>
+</body>
+</html>
