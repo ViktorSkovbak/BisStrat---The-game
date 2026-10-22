@@ -37,7 +37,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     items = load_items()
     state = _state(args.log, args.today)
     pick = next_pick(state, areas, items)
-    data = export.build(state, tracks, areas, pick)
+    data = export.build(state, tracks, areas, pick, items)
     due_fc = [f.id for f in state.forecasts.values()
               if f.outcome is None and f.resolve_by <= args.today]
     week_fc = [f for f in state.forecasts.values() if (args.today - f.created).days < 7]
@@ -128,7 +128,8 @@ def cmd_forecasts(args: argparse.Namespace) -> int:
 def cmd_export(args: argparse.Namespace) -> int:
     tracks, areas = load_map()
     state = _state(args.log, args.today)
-    data = export.build(state, tracks, areas, next_pick(state, areas, load_items()))
+    items = load_items()
+    data = export.build(state, tracks, areas, next_pick(state, areas, items), items)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(data, indent=1, ensure_ascii=False) + "\n", encoding="utf-8",
                         newline="\n")

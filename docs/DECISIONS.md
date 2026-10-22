@@ -34,3 +34,15 @@ The plan said 20; the map has 19, because game theory sits inside competitive dy
 | T3 Combine | Two or more laws in tension, quantified trade-off | 1500-1700 |
 | T4 Live | Viktor's own business, defended against the mentor | 1700-2000 |
 Strong areas aim at D = R + 100, and weak areas at R − 50 with extra cards (`src/foundry/pick.py`).
+
+## D10. Judgement, not arithmetic (22 Oct 2026)
+Viktor's feedback in the first session: calculating answers from formulas is not how he wants to learn. He wants the principle shown in motion, plus **the goal, the ideal and the trade-offs**. So:
+- every lab states the ideal and the rules of thumb, with a levers table of costs and catches;
+- every test is a business decision with one-click options; Viktor locks a call and a size (small, about 2×, 3× or more) before the page reveals anything;
+- rubric B's "numbers" became "sizing" (order of magnitude), and rubric A's "mechanism" asks for rough sizes, never exact arithmetic.
+
+## D11. One lab kit for every simulation (22 Oct 2026)
+`web/kit/lab.js` and `lab.css` build every lab page from a config: goal, story, parameters, model, chart, scene, tests and takeaways. One consistent experience, much less code per lab, and fixes land everywhere at once. Contract: `web/kit/README.md`.
+
+## D12. A starter lab for every area (22 Oct 2026)
+So that every machine part can be built, each of the 19 areas has at least one lab or drill (L01-L18, D01 for strategy). Built by one Sonnet agent per lab and reviewed by Opus. Depth comes later, area by area.

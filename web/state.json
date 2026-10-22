@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-22T13:50:31",
+ "generated": "2026-10-22T14:28:37",
  "today": "2026-10-22",
  "player": {
   "xp": 0,
@@ -63,6 +63,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": "D01",
    "history": []
   },
   {
@@ -82,6 +83,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -101,6 +103,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -120,6 +123,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -139,6 +143,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -158,6 +163,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -177,6 +183,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -196,6 +203,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -215,6 +223,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -234,6 +243,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -253,6 +263,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": "L01",
    "history": []
   },
   {
@@ -272,6 +283,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -291,6 +303,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -310,6 +323,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -329,6 +343,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -348,6 +363,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -367,6 +383,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -386,6 +403,7 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
   },
   {
@@ -405,7 +423,22 @@
    "jammed": false,
    "reasons": [],
    "mature_cards": 0,
+   "build_with": null,
    "history": []
+  }
+ ],
+ "labs": [
+  {
+   "id": "L01",
+   "title": "Kingman's law: why busy teams are slow",
+   "areas": [
+    "operations",
+    "management"
+   ],
+   "sim": "labs/kingman.html",
+   "difficulty": 1250,
+   "played": false,
+   "grade": null
   }
  ],
  "forecasts": {

@@ -169,13 +169,6 @@ import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js"
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 
-const LABS = [
-  { id: "L01", title: "Kingman's law: why busy teams are slow", area: "Operations & queueing", href: "labs/kingman.html" },
-  { id: "L02", title: "The Peter principle and promotion rules", area: "Org design & incentives" },
-  { id: "L03", title: "Wright's law: cost per doubling", area: "Unit economics & cost curves" },
-  { id: "L04", title: "Power laws and returning the fund", area: "Venture finance" },
-  { id: "L05", title: "Calibration and the outside view", area: "Forecasting" },
-];
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -223,15 +216,18 @@ const trackRows = state.tracks.map((t) => {
     return `<tr><td>${esc(a.part_name)}<span class="area">${esc(a.name)}</span></td>
       <td class="r num">${a.items ? a.rating : "–"}</td>
       <td><span class="pips" aria-label="level ${a.level} of 4">${pips}</span></td>
-      <td><span class="chip ${st}" title="${esc(a.reasons.join("; "))}">${st}</span></td></tr>`;
+      <td><span class="chip ${st}" title="${esc(a.reasons.join("; "))}">${st}</span>${!a.level && a.build_with ? `<span class="area">build with ${esc(a.build_with)}</span>` : ""}</td></tr>`;
   }).join("");
   return `<tr class="track"><td colspan="4">${esc(t.name)}</td></tr>${rows}`;
 }).join("");
 $("ledger").innerHTML = `<thead><tr><th>Part</th><th class="r">Rating</th><th>Level</th><th>State</th></tr></thead><tbody>${trackRows}</tbody>`;
 
-$("labs").innerHTML = LABS.map((l) => l.href
-  ? `<a class="lab" href="${l.href}"><span class="id">${l.id}</span><span class="t">${esc(l.title)}<small>${esc(l.area)}</small></span><span class="go">Open simulation →</span></a>`
-  : `<div class="lab locked"><span class="id">${l.id}</span><span class="t">${esc(l.title)}<small>${esc(l.area)}</small></span><span class="go">coming</span></div>`).join("");
+const labs = state.labs || [];
+$("labs").innerHTML = labs.length ? labs.map((l) => {
+  const status = l.played ? `passed · ${Math.round(l.grade * 100)}%` : "Open simulation →";
+  const inner = `<span class="id">${esc(l.id)}</span><span class="t">${esc(l.title)}<small>${esc(areaName(l.areas[0]))}</small></span><span class="go">${status}</span>`;
+  return l.sim ? `<a class="lab" href="${esc(l.sim)}">${inner}</a>` : `<div class="lab locked">${inner}</div>`;
+}).join("") : `<p class="empty">No labs yet.</p>`;
 
 const rec = state.recent;
 $("recent").innerHTML = rec.length
@@ -540,7 +536,8 @@ function pick(ev) {
   const hit = ray.intersectObjects(pickables)[0];
   if (!hit) { tip.hidden = true; return; }
   const a = hit.object.userData.area;
-  const st = a.jammed ? `Jammed: ${a.reasons.join("; ")}` : a.level ? `Level ${a.level} of 4` : "Blueprint: not built yet";
+  const st = a.jammed ? `Jammed: ${a.reasons.join("; ")}` : a.level ? `Level ${a.level} of 4`
+    : `Blueprint: ${a.build_with ? `pass ${a.build_with} to build it` : "not built yet"}`;
   tip.innerHTML = `<b>${esc(a.part_name)}</b>${esc(a.name)}<br><span class="muted">${st}${a.items ? ` · rating ${a.rating}` : ""}</span>`;
   tip.hidden = false;
   const x = Math.min(ev.clientX - r.left + 14, r.width - 270);

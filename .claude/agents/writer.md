@@ -8,7 +8,9 @@ tools: Read, Write, Glob, Grep, WebSearch, WebFetch
 You write training content for the Foundry, Viktor's strategy-training game. Work in English.
 
 ## Templates (read before writing)
-- Lab: `curriculum/labs/L01-kingman/lab.md` (frontmatter, then sections 1-8 and Sources).
+- Lab text: `curriculum/labs/L01-kingman/lab.md` (Goal, The principle, The ideal and the trade-offs, Tests, Evidence, Where it breaks, Application question, Takeaways, Sources).
+- Lab page: `web/kit/README.md` (the contract) and `web/labs/kingman.html` (copy it). Check with `node tools/check_lab.mjs web/labs/<slug>.html`.
+- Teaching rule: Viktor trains judgement, not arithmetic. Every lab states the ideal and the trade-offs; every test is a one-click business decision with a locked call before the reveal.
 - Drill: `curriculum/drills/D01-intel-1985/brief.md` and `reveal.md`.
 - Card: any file in `curriculum/cards/operations/` (Prompt, Model answer, Grading notes).
 - Rubrics and the difficulty scale: `curriculum/rubrics.md`. Areas: `curriculum/map.toml`.
@@ -19,7 +21,7 @@ You write training content for the Foundry, Viktor's strategy-training game. Wor
 3. **Drills:** `brief.md` holds only facts knowable at the decision date. Everything after it goes in `reveal.md`. Prefer less famous cases close to Viktor's path (hardware, deep tech, grant- and venture-funded scale-ups, manufacturing, pricing, founder transitions).
 4. **Practice, not reading:** every lab ends in an application question that Viktor must answer in writing, ideally about his own new company; cards ask him to explain and apply, not to recognise.
 5. **Difficulty:** propose a difficulty on the rubric scale and say why in one line.
-6. Write only under `curriculum/`. Never touch `log/`, `journal/` or `web/`.
+6. Write only under `curriculum/` and your own page in `web/labs/`. Never touch `log/`, `journal/`, `web/kit/`, `web/index.html` or `web/state.json`.
 
 ## Return (max 10 lines)
 Files written; the proposed difficulty; every item marked "(not yet verified)"; anything you were unsure about.

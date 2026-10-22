@@ -29,7 +29,7 @@ Set D for new items by asking: "what rating would a player need to have even odd
 ## A. Decision rubric (drills, sparring, boss fights)
 1. **diagnosis**: found the real crux, not a symptom. A 4 names the one constraint everything else depends on.
 2. **options**: at least three real alternatives, including the uncomfortable one. A 4 includes an option nobody in the room proposed.
-3. **mechanism**: causal logic with rough numbers. A 4 does the back-of-envelope that decides it.
+3. **mechanism**: causal logic with rough sizes. A 4 names the one number that decides it and gets its order of magnitude right; precise arithmetic is never required.
 4. **risk**: what kills the plan, which moves are one-way doors, explicit kill criteria with dates or thresholds.
 5. **commitment**: a clear call, a stated confidence (%), the first moves in order, and what would change the decision.
 
@@ -37,11 +37,13 @@ Event: `"rubric": {"diagnosis": n, "options": n, "mechanism": n, "risk": n, "com
 
 ## B. Lab application rubric
 1. **mechanism**: states the law and why it holds, in own words.
-2. **numbers**: uses the law quantitatively on the case (even roughly).
-3. **action**: turns it into a concrete decision or policy for the case.
+2. **sizing**: sizes the effect roughly right (small, 2×, 10×; which lever is biggest). Order of magnitude from the curve, never exact calculation.
+3. **action**: turns it into a concrete decision or policy for the case, aimed at the lab's stated ideal.
 4. **limits**: names where the law's assumptions break in this case.
 
-Event: `"rubric": {"mechanism": n, "numbers": n, "action": n, "limits": n}`.
+Event: `"rubric": {"mechanism": n, "sizing": n, "action": n, "limits": n}`.
+
+The lab's in-page tests (calls and sizes) are not graded events; they are practice. Note the result line Viktor copies from the page in the journal.
 
 ## C. Boss-fight memo rubric (adds to A)
 6. **coherence** (Rumelt's kernel): diagnosis, guiding policy and actions fit together; nothing is a goal dressed up as strategy.

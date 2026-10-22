@@ -32,6 +32,7 @@ class Item:
     difficulty: int
     phase: int
     path: Path
+    sim: str | None = None  # lab simulation page under web/, e.g. labs/kingman.html
 
 
 def load_map(curriculum: Path = CURRICULUM) -> tuple[list[dict], dict[str, Area]]:
@@ -68,7 +69,8 @@ def _item(path: Path, kind: str) -> Item:
     meta = parse_frontmatter(path.read_text(encoding="utf-8"))
     areas = meta.get("areas") or [meta["area"]]
     return Item(str(meta["id"]), kind, str(meta.get("title", meta["id"])), tuple(areas),
-                int(meta.get("difficulty", 1200)), int(meta.get("phase", 1)), path)
+                int(meta.get("difficulty", 1200)), int(meta.get("phase", 1)), path,
+                str(meta["sim"]) if meta.get("sim") else None)
 
 
 def load_items(curriculum: Path = CURRICULUM) -> dict[str, Item]:

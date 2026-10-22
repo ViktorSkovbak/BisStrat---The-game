@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from foundry import rules
-from foundry.content import Area
+from foundry.content import Area, Item
 from foundry.engine import State
 from foundry.machine import all_parts
 from foundry.pick import Pick
@@ -30,8 +30,26 @@ def calibration(state: State) -> dict:
     }
 
 
-def build(state: State, tracks: list[dict], areas: dict[str, Area], pick: Pick) -> dict:
+def labs(state: State, items: dict[str, Item]) -> list[dict]:
+    best = {}
+    for p in state.played:
+        best[p.item] = max(best.get(p.item, 0.0), p.grade)
+    return [{"id": i.id, "title": i.title, "areas": list(i.areas), "sim": i.sim,
+             "difficulty": i.difficulty, "played": i.id in best,
+             "grade": round(best[i.id], 2) if i.id in best else None}
+            for i in sorted(items.values(), key=lambda i: i.id) if i.kind == "lab"]
+
+
+def build(state: State, tracks: list[dict], areas: dict[str, Area], pick: Pick,
+          items: dict[str, Item]) -> dict:
     parts = all_parts(state)
+    lab_list = labs(state, items)
+    # The lab that builds each area's part: its first lab whose primary area it is.
+    builds = {}
+    for lab in lab_list:
+        builds.setdefault(lab["areas"][0], lab["id"])
+    drills = {i.areas[0]: i.id for i in sorted(items.values(), key=lambda i: i.id, reverse=True)
+              if i.kind == "drill"}
     level = state.level
     floor, ceiling = rules.level_threshold(level), rules.level_threshold(level + 1)
     return {
@@ -51,9 +69,11 @@ def build(state: State, tracks: list[dict], areas: dict[str, Area], pick: Pick) 
              "rating": round(state.areas[a.id].rating), "items": state.areas[a.id].items,
              "level": parts[a.id].level, "jammed": parts[a.id].jammed,
              "reasons": list(parts[a.id].reasons), "mature_cards": parts[a.id].mature_cards,
+             "build_with": builds.get(a.id) or drills.get(a.id),
              "history": [[d.isoformat(), round(r)] for d, r in state.areas[a.id].history]}
             for a in areas.values()
         ],
+        "labs": lab_list,
         "forecasts": calibration(state),
         "recent": [{"date": p.date.isoformat(), "kind": p.kind, "item": p.item,
                     "grade": round(p.grade, 2), "xp": p.xp, "areas": p.areas}
