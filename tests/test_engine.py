@@ -86,6 +86,8 @@ def test_secondary_areas_move_at_half_weight():
     s = replay([e], AREA_IDS, D0)
     assert s.areas["strategy"].rating == pytest.approx(1220)
     assert s.areas["capital"].rating == pytest.approx(1210)
+    assert part_state(s, "strategy").level == 1
+    assert part_state(s, "capital").level == 0
 
 
 def test_part_jams_when_idle_and_when_cards_pile_up():

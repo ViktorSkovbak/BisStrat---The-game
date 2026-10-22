@@ -1,0 +1,561 @@
+<title>The Foundry</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a dark machine hall. The isometric scene is the page; an instrument rail and the
+   parts ledger sit beneath it. Single dark world by design. */
+:root {
+  --hall: #0c0f13;
+  --plate: #141920;
+  --plate-2: #1b222b;
+  --line: #29323d;
+  --ink: #e8e3d7;
+  --ink-dim: #8d95a0;
+  --brass: #c9a25b;
+  --glow: #ffb547;
+  --cool: #7fb3d6;
+  --jam: #e5573f;
+  --ok: #86c38f;
+  --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color-scheme: dark;
+}
+html, body { background: var(--hall); color: var(--ink); }
+body { font-family: var(--body); font-size: 15px; line-height: 1.5; }
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 48px;
+  display: grid; gap: 22px;
+}
+header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
+h1 { font-family: var(--display); font-weight: 800; font-size: clamp(30px, 5vw, 44px); letter-spacing: .06em; text-transform: uppercase; margin: 0; line-height: 1; }
+h1 span { color: var(--brass); }
+.sub { color: var(--ink-dim); font-size: 13px; margin: 0; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 20px; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 10px; color: var(--ink); text-wrap: balance; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* Scene */
+.scene { position: relative; border: 1px solid var(--line); background: radial-gradient(120% 90% at 50% 40%, #151b23 0%, var(--hall) 70%); height: clamp(340px, 62vh, 640px); overflow: hidden; }
+.scene canvas { display: block; width: 100%; height: 100%; }
+.caption { margin: 0; padding: 10px 14px; border: 1px solid var(--line); border-top: 0; background: var(--plate); font-size: 15px; }
+.tip { position: absolute; pointer-events: none; background: rgba(12,15,19,.92); border: 1px solid var(--brass); padding: 8px 10px; font-size: 13px; min-width: 180px; max-width: 260px; }
+.tip b { font-family: var(--display); font-size: 17px; letter-spacing: .05em; text-transform: uppercase; display: block; }
+.tip .muted { color: var(--ink-dim); }
+.legend { position: absolute; left: 12px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-dim); }
+.legend i { display: inline-block; width: 9px; height: 9px; margin-right: 6px; vertical-align: 0; }
+
+/* Instrument rail */
+.rail { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.gauge { background: var(--plate); padding: 14px 16px; display: grid; gap: 4px; min-width: 0; }
+.gauge .label { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-dim); }
+.gauge .value { font-family: var(--display); font-weight: 800; font-size: 32px; line-height: 1; }
+.gauge .value small { font-family: var(--body); font-weight: 400; font-size: 13px; color: var(--ink-dim); margin-left: 6px; letter-spacing: 0; }
+.bar { height: 6px; background: var(--plate-2); position: relative; }
+.bar > span { position: absolute; inset: 0 auto 0 0; background: var(--brass); }
+.gauge .foot { font-size: 12px; color: var(--ink-dim); }
+
+.cols { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+.panel { background: var(--plate); border: 1px solid var(--line); padding: 16px; min-width: 0; }
+.next { border-color: var(--brass); }
+.next .kind { font-family: var(--display); font-size: 26px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--glow); }
+.next p { margin: 4px 0 0; color: var(--ink-dim); }
+.next code { font-family: var(--mono); color: var(--ink); background: var(--plate-2); padding: 1px 6px; }
+
+/* Parts ledger */
+.ledger { width: 100%; border-collapse: collapse; font-size: 14px; }
+.ledger th { text-align: left; font-weight: 500; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-dim); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.ledger td { padding: 7px 8px; border-bottom: 1px solid var(--plate-2); vertical-align: middle; }
+.ledger tr.track td { padding-top: 14px; font-family: var(--display); font-size: 14px; letter-spacing: .12em; text-transform: uppercase; color: var(--brass); border-bottom: 1px solid var(--line); }
+.ledger td.r { text-align: right; }
+.ledger .area { color: var(--ink-dim); font-size: 12px; display: block; }
+.pips { display: inline-flex; gap: 3px; }
+.pips i { width: 8px; height: 8px; border: 1px solid var(--brass); }
+.pips i.on { background: var(--glow); border-color: var(--glow); box-shadow: 0 0 6px var(--glow); }
+.chip { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; padding: 1px 7px; border: 1px solid currentColor; white-space: nowrap; }
+.chip.blueprint { color: var(--cool); opacity: .8; }
+.chip.running { color: var(--ok); }
+.chip.jammed { color: var(--jam); }
+.table-scroll { overflow-x: auto; }
+
+.labs { display: grid; gap: 8px; }
+.lab { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); background: var(--plate-2); color: var(--ink); text-decoration: none; }
+a.lab:hover, a.lab:focus-visible { border-color: var(--brass); outline: none; }
+.lab .id { font-family: var(--mono); color: var(--brass); }
+.lab .t { min-width: 0; }
+.lab .t small { display: block; color: var(--ink-dim); font-size: 12px; }
+.lab.locked { opacity: .5; }
+.lab .go { font-size: 12px; color: var(--glow); white-space: nowrap; }
+
+.recent { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }
+.recent li { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--plate-2); padding-bottom: 6px; }
+.empty { color: var(--ink-dim); font-size: 14px; margin: 0; }
+svg text { fill: var(--ink-dim); font-family: var(--mono); font-size: 10px; }
+.stack { display: grid; gap: 22px; min-width: 0; }
+.err { border: 1px solid var(--jam); padding: 12px; color: var(--ink); }
+
+@media (max-width: 860px) {
+  .cols { grid-template-columns: minmax(0, 1fr); }
+  .rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <h1>The <span>Foundry</span></h1>
+    <p class="sub" id="stamp">Loading the machine…</p>
+  </header>
+
+  <section aria-label="Your company-machine">
+    <div class="scene" id="scene">
+      <div class="legend" aria-hidden="true">
+        <span><i style="background:var(--glow)"></i>running</span>
+        <span><i style="border:1px solid var(--cool)"></i>blueprint</span>
+        <span><i style="background:var(--jam)"></i>jammed</span>
+      </div>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+    <p class="caption" id="caption">Reading the log.</p>
+  </section>
+
+  <section class="rail" aria-label="Progress">
+    <div class="gauge"><span class="label">Level</span><span class="value" id="g-level">1</span><div class="bar"><span id="g-xpbar" style="width:0%"></span></div><span class="foot num" id="g-xp">0 XP</span></div>
+    <div class="gauge"><span class="label">Streak</span><span class="value" id="g-streak">0</span><span class="foot" id="g-streak-foot">days</span></div>
+    <div class="gauge"><span class="label">Cards</span><span class="value" id="g-cards">0</span><span class="foot" id="g-cards-foot">due today</span></div>
+    <div class="gauge"><span class="label">Rating</span><span class="value" id="g-rating">1200</span><span class="foot" id="g-rating-foot">mean of active areas</span></div>
+  </section>
+
+  <div class="cols">
+    <div class="stack">
+      <section class="panel next" id="next" aria-label="Next up"></section>
+      <section class="panel" aria-label="Machine parts">
+        <h2>Parts ledger</h2>
+        <div class="table-scroll"><table class="ledger" id="ledger"></table></div>
+      </section>
+    </div>
+    <div class="stack">
+      <section class="panel" aria-label="Labs">
+        <h2>Labs</h2>
+        <div class="labs" id="labs"></div>
+      </section>
+      <section class="panel" aria-label="Calibration">
+        <h2>Calibration</h2>
+        <div id="calib"></div>
+      </section>
+      <section class="panel" aria-label="Recent">
+        <h2>Recent</h2>
+        <ul class="recent" id="recent"></ul>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+const LABS = [
+  { id: "L01", title: "Kingman's law: why busy teams are slow", area: "Operations & queueing", href: "labs/kingman.html" },
+  { id: "L02", title: "The Peter principle and promotion rules", area: "Org design & incentives" },
+  { id: "L03", title: "Wright's law: cost per doubling", area: "Unit economics & cost curves" },
+  { id: "L04", title: "Power laws and returning the fund", area: "Venture finance" },
+  { id: "L05", title: "Calibration and the outside view", area: "Forecasting" },
+];
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+let state;
+try {
+  const res = await fetch("state.json", { cache: "no-store" });
+  if (!res.ok) throw new Error(res.status);
+  state = await res.json();
+} catch (e) {
+  $("caption").innerHTML = '<span class="err">Could not load state.json. Run <code>/stats</code> in a Foundry session to publish it.</span>';
+  throw e;
+}
+
+/* ---------- Panels ---------- */
+const areas = state.areas;
+const active = areas.filter((a) => a.items > 0);
+const built = areas.filter((a) => a.level > 0);
+const jammed = areas.filter((a) => a.jammed);
+const p = state.player;
+$("stamp").textContent = `${p.title} · updated ${state.generated.replace("T", " ").slice(0, 16)}`;
+$("g-level").innerHTML = `${p.level}<small>${esc(p.title)}</small>`;
+const span = p.next_level_at - p.level_floor;
+$("g-xpbar").style.width = `${Math.round(((p.xp - p.level_floor) / span) * 100)}%`;
+$("g-xp").textContent = `${p.xp} XP · next level at ${p.next_level_at}`;
+$("g-streak").innerHTML = `${state.streak.days}<small>days</small>`;
+$("g-streak-foot").textContent = `${state.streak.today_done ? "Today done" : "Today open"} · best ${state.streak.best} · ${state.streak.freezes} freeze${state.streak.freezes === 1 ? "" : "s"}`;
+$("g-cards").innerHTML = `${state.cards.due}<small>due</small>`;
+$("g-cards-foot").textContent = `${state.cards.total} in deck · ${state.cards.mature} mature`;
+const meanRating = active.length ? Math.round(active.reduce((s, a) => s + a.rating, 0) / active.length) : 1200;
+$("g-rating").innerHTML = `${meanRating}<small>Elo</small>`;
+$("g-rating-foot").textContent = active.length ? `mean of ${active.length} active area${active.length === 1 ? "" : "s"} · 1500 = top MBA` : "start rating · 1500 = top MBA";
+
+const n = state.next;
+const kindLabel = { lab: "Lab", drill: "Decision drill", spar: "Sparring", boss: "Boss fight", repetition: "Repair", new: "New item" }[n.kind] || n.kind;
+const areaName = (id) => (areas.find((a) => a.id === id) || { name: id }).name;
+$("next").innerHTML = `<h2>Next up</h2><div class="kind">${esc(kindLabel)}${n.item ? " " + esc(n.item) : ""}</div>
+  <p>${esc(areaName(n.area))} · difficulty <span class="num">${n.target_difficulty}</span></p>
+  <p>${esc(n.reason[0].toUpperCase() + n.reason.slice(1))}. Start it with <code>/train</code>.</p>`;
+
+const trackRows = state.tracks.map((t) => {
+  const rows = areas.filter((a) => a.track === t.id).map((a) => {
+    const st = a.jammed ? "jammed" : a.level ? "running" : "blueprint";
+    const pips = [1, 2, 3, 4].map((i) => `<i class="${i <= a.level ? "on" : ""}"></i>`).join("");
+    return `<tr><td>${esc(a.part_name)}<span class="area">${esc(a.name)}</span></td>
+      <td class="r num">${a.items ? a.rating : "–"}</td>
+      <td><span class="pips" aria-label="level ${a.level} of 4">${pips}</span></td>
+      <td><span class="chip ${st}" title="${esc(a.reasons.join("; "))}">${st}</span></td></tr>`;
+  }).join("");
+  return `<tr class="track"><td colspan="4">${esc(t.name)}</td></tr>${rows}`;
+}).join("");
+$("ledger").innerHTML = `<thead><tr><th>Part</th><th class="r">Rating</th><th>Level</th><th>State</th></tr></thead><tbody>${trackRows}</tbody>`;
+
+$("labs").innerHTML = LABS.map((l) => l.href
+  ? `<a class="lab" href="${l.href}"><span class="id">${l.id}</span><span class="t">${esc(l.title)}<small>${esc(l.area)}</small></span><span class="go">Open simulation →</span></a>`
+  : `<div class="lab locked"><span class="id">${l.id}</span><span class="t">${esc(l.title)}<small>${esc(l.area)}</small></span><span class="go">coming</span></div>`).join("");
+
+const rec = state.recent;
+$("recent").innerHTML = rec.length
+  ? rec.map((r) => `<li><span>${esc(r.date)} · ${esc(r.kind)} ${esc(r.item)}</span><span class="num">${Math.round(r.grade * 100)}% · +${r.xp} XP</span></li>`).join("")
+  : `<li class="empty">Nothing graded yet. Your first lab will show here.</li>`;
+
+function calibrationChart(fc) {
+  const W = 300, H = 220, m = 30, s = (v) => m + v * (W - m - 10), y = (v) => H - m - v * (H - m - 10);
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const grid = ticks.map((t) => `<line x1="${s(t)}" y1="${y(0)}" x2="${s(t)}" y2="${y(1)}" stroke="var(--line)"/><line x1="${s(0)}" y1="${y(t)}" x2="${s(1)}" y2="${y(t)}" stroke="var(--line)"/>
+    <text x="${s(t)}" y="${H - m + 14}" text-anchor="middle">${t * 100}%</text><text x="${m - 6}" y="${y(t) + 3}" text-anchor="end">${t * 100}%</text>`).join("");
+  const pts = fc.bins.map((b) => `<circle cx="${s(b.mean_p)}" cy="${y(b.observed)}" r="${3 + Math.sqrt(b.n) * 2}" fill="var(--glow)" fill-opacity=".85"/>`).join("");
+  const note = fc.resolved
+    ? `<p class="sub">${fc.resolved} resolved · Brier <span class="num">${fc.brier_mean.toFixed(3)}</span> (0 is perfect, 0.25 is a coin flip) · ${fc.open} open</p>`
+    : `<p class="empty">No resolved forecasts yet${fc.open ? ` (${fc.open} open)` : ""}. Make one with <code>/forecast</code>; dots land here as they resolve.</p>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Calibration curve: forecast probability against observed frequency">
+    ${grid}<line x1="${s(0)}" y1="${y(0)}" x2="${s(1)}" y2="${y(1)}" stroke="var(--brass)" stroke-dasharray="4 4"/>${pts}
+    <text x="${s(0.5)}" y="${H - 2}" text-anchor="middle">you said</text></svg>${note}`;
+}
+$("calib").innerHTML = calibrationChart(state.forecasts);
+
+function caption() {
+  const total = areas.length;
+  if (!built.length) return `Day one. All ${total} parts are still blueprints. Pass Lab 1 to build the production floor.`;
+  if (jammed.length) {
+    const j = jammed[0];
+    return `The ${j.part_name.toLowerCase()} is jammed: ${j.reasons[0]}. ${built.length} of ${total} parts built.`;
+  }
+  const best = built.reduce((a, b) => (b.rating > a.rating ? b : a));
+  return `${built.length} of ${total} parts running. Strongest: the ${best.part_name.toLowerCase()} at ${best.rating}.`;
+}
+$("caption").textContent = caption();
+
+/* ---------- The machine ---------- */
+const host = $("scene");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.85;
+host.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+// Metals need something to reflect; a neutral room keeps brass and steel readable.
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.fog = new THREE.Fog(0x0c0f13, 70, 140);
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
+const TARGET = new THREE.Vector3(0, 0, -3.5);
+camera.position.set(TARGET.x + 60, 60, TARGET.z + 60);
+camera.lookAt(TARGET);
+
+scene.add(new THREE.HemisphereLight(0x6f8aa6, 0x0b0d10, 0.55));
+const key = new THREE.DirectionalLight(0xffe2b0, 1.6);
+key.position.set(-30, 50, 20);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+Object.assign(key.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30 });
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x7fb3d6, 0.5);
+rim.position.set(30, 20, -40);
+scene.add(rim);
+
+const M = {
+  floor: new THREE.MeshStandardMaterial({ color: 0x12161c, roughness: 0.95 }),
+  plinth: new THREE.MeshStandardMaterial({ color: 0x232a33, metalness: 0.5, roughness: 0.6 }),
+  dark: new THREE.MeshStandardMaterial({ color: 0x2c333d, metalness: 0.6, roughness: 0.45 }),
+  steel: new THREE.MeshStandardMaterial({ color: 0x5b6774, metalness: 0.8, roughness: 0.35 }),
+  brass: new THREE.MeshStandardMaterial({ color: 0xb8893f, metalness: 0.95, roughness: 0.3 }),
+};
+const glowMat = (intensity) => new THREE.MeshStandardMaterial({ color: 0x2a1a05, emissive: 0xffb547, emissiveIntensity: intensity });
+const jamMat = new THREE.MeshStandardMaterial({ color: 0x300, emissive: 0xe5573f, emissiveIntensity: 3 });
+const blueprintMat = new THREE.LineBasicMaterial({ color: 0x7fb3d6, transparent: true, opacity: 0.5 });
+
+const floor = new THREE.Mesh(new THREE.BoxGeometry(46, 0.4, 36), M.floor);
+floor.position.set(0, -0.2, -3.5);
+floor.receiveShadow = true;
+scene.add(floor);
+const grid = new THREE.GridHelper(46, 46, 0x1e252e, 0x171c23);
+grid.position.set(0, 0.01, -3.5);
+scene.add(grid);
+
+/* Primitive helpers */
+function box(g, w, h, d, mat, x = 0, y = 0, z = 0) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y + h / 2, z); m.castShadow = m.receiveShadow = true; g.add(m); return m;
+}
+function cyl(g, r, h, mat, x = 0, y = 0, z = 0, seg = 24, rTop = r) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, r, h, seg), mat);
+  m.position.set(x, y + h / 2, z); m.castShadow = m.receiveShadow = true; g.add(m); return m;
+}
+function gear(g, r, mat, x, y, z, teeth = 10) {
+  const w = new THREE.Group();
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.35, 24), mat);
+  hub.rotation.x = Math.PI / 2; w.add(hub);
+  for (let i = 0; i < teeth; i++) {
+    const t = new THREE.Mesh(new THREE.BoxGeometry(0.28, r * 0.35, 0.35), mat);
+    const a = (i / teeth) * Math.PI * 2;
+    t.position.set(Math.cos(a) * r, Math.sin(a) * r, 0); t.rotation.z = a - Math.PI / 2; w.add(t);
+  }
+  w.position.set(x, y, z); w.traverse((o) => (o.castShadow = true)); g.add(w); return w;
+}
+function worker(g, x, y, z, mat) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.2, 12, 8), mat);
+  m.position.set(x, y, z); g.add(m); return m;
+}
+
+/* Part models. Each builds into group g at level lv and returns an animation function
+   (t, on) => void. Workers are glowing lights; more level = more workers and brass. */
+const PARTS = {
+  core(g, lv, glow) {
+    cyl(g, 2.1, 0.6, M.dark); cyl(g, 1.6, 4 + lv * 0.8, M.steel, 0, 0.6);
+    const c = cyl(g, 0.8, 4.4 + lv * 0.8, glow, 0, 0.6, 0, 20);
+    const rings = [];
+    for (let i = 0; i < 1 + lv; i++) { const r = new THREE.Mesh(new THREE.TorusGeometry(1.9, 0.12, 8, 40), M.brass); r.rotation.x = Math.PI / 2; r.position.y = 1.4 + i * 1.1; g.add(r); rings.push(r); }
+    return (t, on) => { if (on) rings.forEach((r, i) => (r.rotation.z = t * (0.3 + i * 0.1) * (i % 2 ? -1 : 1))); c.material.emissiveIntensity = on ? 1.4 + Math.sin(t * 2) * 0.4 : 0.3; };
+  },
+  walls(g, lv) {
+    const h = 0.8 + lv * 0.4;
+    box(g, 4, h, 0.4, M.dark, 0, 0, -1.8); box(g, 4, h, 0.4, M.dark, 0, 0, 1.8); box(g, 0.4, h, 3.2, M.dark, -1.8, 0, 0); box(g, 0.4, h, 3.2, M.dark, 1.8, 0, 0);
+    box(g, 1.4, h + 0.8, 1.4, M.steel);
+    for (const [x, z] of [[-1.8, -1.8], [1.8, -1.8], [-1.8, 1.8], [1.8, 1.8]]) cyl(g, 0.35, h + 0.4, M.brass, x, 0, z, 10);
+    return () => {};
+  },
+  piston(g, lv) {
+    const rods = [];
+    for (let i = 0; i < Math.max(1, lv); i++) { const x = -1.2 + i * 0.8; cyl(g, 0.35, 1.6, M.steel, x, 0, 0); rods.push(cyl(g, 0.15, 2, M.brass, x, 1.6, 0, 10)); }
+    box(g, 3.6, 0.3, 1.4, M.dark);
+    return (t, on) => rods.forEach((r, i) => { if (on) r.position.y = 2.2 + Math.sin(t * 3 + i) * 0.6; });
+  },
+  assay(g, lv, glow) {
+    box(g, 3, 2, 2.4, M.dark); box(g, 3.2, 0.2, 2.6, M.brass, 0, 2);
+    for (let i = 0; i < 3; i++) box(g, 0.5, 0.6, 0.05, glow, -0.9 + i * 0.9, 0.8, 1.21);
+    return () => {};
+  },
+  furnace(g, lv, glow) {
+    cyl(g, 1.6, 2.4, M.dark, 0, 0, 0, 8, 1.2); cyl(g, 0.4, 2.2, M.steel, 0.7, 2.4, -0.4, 10);
+    const mouth = box(g, 0.9, 0.7, 0.1, glow, 0, 0.5, 1.45);
+    box(g, 3.6, 0.2, 0.7, M.steel, 0, 0, 2.2);
+    const ingots = [0, 1, 2].map((i) => box(g, 0.4, 0.2, 0.3, M.brass, -1.4 + i * 1.2, 0.2, 2.2));
+    return (t, on) => { mouth.material.emissiveIntensity = on ? 2 + Math.sin(t * 5) * 0.5 : 0.3; if (on) ingots.forEach((b, i) => (b.position.x = -1.6 + ((t * 0.6 + i * 1.2) % 3.6))); };
+  },
+  press(g) {
+    box(g, 0.3, 3, 0.3, M.steel, -1.2, 0, 0); box(g, 0.3, 3, 0.3, M.steel, 1.2, 0, 0); box(g, 2.7, 0.3, 0.6, M.dark, 0, 3);
+    const head = box(g, 1.6, 0.6, 0.9, M.brass, 0, 1.8); box(g, 2, 0.5, 1.2, M.dark);
+    return (t, on) => { if (on) head.position.y = 1.6 + Math.abs(Math.sin(t * 1.5)) * 0.8; };
+  },
+  vault(g, lv) {
+    box(g, 3.4, 2.6, 2.6, M.dark);
+    const door = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 0.25, 32), M.brass);
+    door.rotation.x = Math.PI / 2; door.position.set(0, 1.3, 1.35); door.castShadow = true; g.add(door);
+    for (let i = 0; i < lv; i++) box(g, 0.5, 0.3, 0.3, M.brass, -1.2 + i * 0.6, 0, 1.7);
+    return (t, on) => { if (on) door.rotation.y = t * 0.4; };
+  },
+  gallery(g) {
+    for (let i = 0; i < 3; i++) box(g, 3.6, 0.5 + i * 0.5, 0.9, M.dark, 0, 0, -1.2 + i * 0.9);
+    return () => {};
+  },
+  crane(g) {
+    box(g, 0.5, 4.5, 0.5, M.steel, -1, 0, 0);
+    const boom = new THREE.Group(); boom.position.set(-1, 4.5, 0); g.add(boom);
+    box(boom, 3.8, 0.3, 0.3, M.brass, 1.2, 0, 0); const hook = box(boom, 0.1, 1.5, 0.1, M.steel, 2.8, -1.5, 0);
+    return (t, on) => { if (on) boom.rotation.y = Math.sin(t * 0.4) * 0.9; hook.position.y = -1.5; };
+  },
+  dock(g) {
+    box(g, 4, 0.4, 3, M.dark); box(g, 2.6, 0.8, 1.2, M.steel, 0.3, 0.4, 0.5);
+    for (let i = 0; i < 3; i++) box(g, 0.5, 0.5, 0.5, M.brass, -1.3, 0.4 + i * 0.5, -0.8);
+    return () => {};
+  },
+  floor(g, lv, glow, wmat) {
+    box(g, 4.2, 0.35, 0.8, M.steel, 0, 0, 1.2);
+    const n = 1 + lv;
+    const ws = [];
+    for (let i = 0; i < Math.min(n, 4); i++) { box(g, 0.8, 0.9, 0.8, M.dark, -1.5 + i * 1, 0, -0.6); ws.push(worker(g, -1.5 + i * 1, 1.3, 0.1, wmat)); }
+    const crates = [0, 1, 2, 3].map((i) => box(g, 0.4, 0.35, 0.4, M.brass, 0, 0.35, 1.2));
+    return (t, on) => { if (on) { crates.forEach((c, i) => (c.position.x = -2 + ((t * 0.8 + i) % 4))); ws.forEach((w, i) => (w.position.y = 1.3 + Math.abs(Math.sin(t * 2 + i)) * 0.15)); } };
+  },
+  pipes(g, lv, glow) {
+    for (let i = 0; i < 2; i++) { const r = new THREE.Mesh(new THREE.TorusGeometry(1.1 - i * 0.35, 0.16, 10, 40), M.steel); r.position.set(i ? 0.5 : -0.4, 1.4, 0); r.castShadow = true; g.add(r); }
+    const pulse = worker(g, 0, 1.4, 0, glow);
+    return (t, on) => { if (on) pulse.position.set(-0.4 + Math.cos(t * 1.5) * 1.1, 1.4 + Math.sin(t * 1.5) * 1.1, 0); };
+  },
+  bridge(g, lv, glow, wmat) {
+    box(g, 0.3, 2, 0.3, M.steel, -1.4, 0, -1); box(g, 0.3, 2, 0.3, M.steel, 1.4, 0, -1); box(g, 0.3, 2, 0.3, M.steel, -1.4, 0, 1); box(g, 0.3, 2, 0.3, M.steel, 1.4, 0, 1);
+    box(g, 3.4, 0.25, 2.6, M.dark, 0, 2); box(g, 3.4, 0.5, 0.08, M.brass, 0, 2.25, 1.3);
+    const lead = worker(g, 0, 2.6, 0, wmat);
+    return (t, on) => { if (on) lead.position.x = Math.sin(t * 0.7) * 1.1; };
+  },
+  control(g, lv, glow) {
+    for (let i = 0; i < 2; i++) { box(g, 1.4, 0.9, 0.8, M.dark, -0.8 + i * 1.6, 0, 0); box(g, 1.2, 0.7, 0.08, glow, -0.8 + i * 1.6, 1.0, -0.2); }
+    return () => {};
+  },
+  gears(g, lv) {
+    const gs = [gear(g, 1, M.brass, -0.8, 1.5, 0, 12), gear(g, 0.7, M.steel, 0.95, 1.5, 0, 9)];
+    if (lv >= 2) gs.push(gear(g, 0.5, M.brass, 0.95, 2.75, 0, 7));
+    box(g, 3.6, 0.4, 0.8, M.dark);
+    return (t, on) => { if (on) { gs[0].rotation.z = t * 0.7; gs[1].rotation.z = -t * 1.0; if (gs[2]) gs[2].rotation.z = t * 1.4; } };
+  },
+  table(g, lv, glow, wmat) {
+    cyl(g, 1.2, 0.9, M.dark, 0, 0, 0, 32); cyl(g, 1.3, 0.1, M.brass, 0, 0.9, 0, 32);
+    const a = worker(g, -1.8, 1.0, 0, wmat), b = worker(g, 1.8, 1.0, 0, wmat);
+    return (t, on) => { if (on) { a.position.y = 1 + Math.abs(Math.sin(t * 1.3)) * 0.2; b.position.y = 1 + Math.abs(Math.cos(t * 1.3)) * 0.2; } };
+  },
+  observatory(g) {
+    cyl(g, 1.5, 1.2, M.dark, 0, 0, 0, 24);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(1.45, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.steel);
+    dome.position.y = 1.2; dome.castShadow = true; g.add(dome);
+    const tube = new THREE.Group(); tube.position.y = 2; g.add(tube);
+    const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.32, 2.4, 12), M.brass);
+    scope.rotation.z = -0.9; scope.position.x = 0.8; tube.add(scope);
+    return (t, on) => { if (on) tube.rotation.y = t * 0.25; };
+  },
+  filters(g, lv, glow) {
+    const frames = [];
+    for (let i = 0; i < 3; i++) { box(g, 0.15, 2.2, 2, M.brass, -1.2 + i * 1.2, 0, 0); frames.push(box(g, 0.05, 1.8, 1.6, glow, -1.2 + i * 1.2, 0.2, 0)); }
+    return (t, on) => frames.forEach((f, i) => (f.material.emissiveIntensity = on ? 0.4 + Math.max(0, Math.sin(t * 2 - i)) * 1.6 : 0.2));
+  },
+  tower(g, lv, glow) {
+    for (const [x, z] of [[-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6], [0.6, 0.6]]) cyl(g, 0.1, 4.5, M.steel, x, 0, z, 6, 0.04);
+    box(g, 1.4, 0.15, 1.4, M.brass, 0, 1.5); box(g, 1, 0.15, 1, M.brass, 0, 3);
+    const beacon = worker(g, 0, 4.7, 0, glow);
+    return (t, on) => { beacon.material.emissiveIntensity = on ? (Math.sin(t * 4) > 0 ? 3 : 0.4) : 0.2; };
+  },
+};
+
+const TILE = 7.2;
+const animators = [];
+const pickables = [];
+
+function toBlueprint(group) {
+  const lines = [];
+  group.parent.updateMatrixWorld(true);
+  group.traverse((o) => {
+    if (!o.isMesh) return;
+    const l = new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry, 25), blueprintMat);
+    o.matrixWorld.decompose(l.position, l.quaternion, l.scale);
+    lines.push(l);
+  });
+  return lines;
+}
+
+for (const a of areas) {
+  const isCore = a.part === "core";
+  const g = new THREE.Group();
+  const [col, row] = a.plot;
+  g.position.set(col * TILE, 0, row * TILE);
+  scene.add(g);
+
+  const size = isCore ? 6 : 5.2;
+  const plinth = box(g, size, 0.35, size, M.plinth);
+  plinth.userData.area = a;
+  pickables.push(plinth);
+  const model = new THREE.Group(); model.position.y = 0.35; g.add(model);
+  const lv = Math.max(1, a.level);
+  const glow = glowMat(0.6 + 0.45 * lv);
+  const wmat = glowMat(2.2);
+  const anim = PARTS[a.part](model, lv, glow, wmat);
+
+  if (a.level === 0) {
+    // Blueprint: only the outline of the part, drawn in steel-blue lines.
+    const lines = toBlueprint(model);
+    g.remove(model);
+    lines.forEach((l) => { l.position.sub(g.position); g.add(l); });
+    plinth.material = M.dark.clone(); plinth.material.color.set(0x161b22);
+    continue;
+  }
+  if (a.jammed) {
+    glow.emissiveIntensity = 0.25; wmat.emissiveIntensity = 0.3;
+    const lamp = worker(g, size / 2 - 0.5, 1.2, size / 2 - 0.5, jamMat.clone());
+    animators.push((t) => { anim(t, false); lamp.material.emissiveIntensity = Math.sin(t * 6) > 0 ? 3 : 0.2; });
+  } else {
+    // Brass trim on running parts; more workers with level.
+    box(g, size + 0.1, 0.06, 0.12, M.brass, 0, 0.35, size / 2);
+    box(g, 0.12, 0.06, size + 0.1, M.brass, size / 2, 0.35, 0);
+    animators.push((t) => anim(t, true));
+  }
+}
+
+/* Bloom makes the worker lights glow */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.85, 0.5, 0.82);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+function resize() {
+  const w = host.clientWidth, h = host.clientHeight;
+  renderer.setSize(w, h, false);
+  composer.setSize(w, h);
+  const aspect = w / h;
+  const view = aspect < 1 ? 38 / aspect : 31; // keep the whole floor in frame on phones
+  camera.left = (-view * aspect) / 2; camera.right = (view * aspect) / 2;
+  camera.top = view / 2; camera.bottom = -view / 2;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(host);
+resize();
+
+/* Hover / tap: name the part */
+const ray = new THREE.Raycaster();
+const tip = $("tip");
+function pick(ev) {
+  const r = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObjects(pickables)[0];
+  if (!hit) { tip.hidden = true; return; }
+  const a = hit.object.userData.area;
+  const st = a.jammed ? `Jammed: ${a.reasons.join("; ")}` : a.level ? `Level ${a.level} of 4` : "Blueprint: not built yet";
+  tip.innerHTML = `<b>${esc(a.part_name)}</b>${esc(a.name)}<br><span class="muted">${st}${a.items ? ` · rating ${a.rating}` : ""}</span>`;
+  tip.hidden = false;
+  const x = Math.min(ev.clientX - r.left + 14, r.width - 270);
+  tip.style.left = `${Math.max(8, x)}px`; tip.style.top = `${Math.max(8, ev.clientY - r.top - 10)}px`;
+}
+renderer.domElement.addEventListener("pointermove", pick);
+renderer.domElement.addEventListener("pointerdown", pick);
+renderer.domElement.addEventListener("pointerleave", () => (tip.hidden = true));
+
+const clock = new THREE.Clock();
+function frame() {
+  const t = reduceMotion ? 0 : clock.getElapsedTime();
+  animators.forEach((f) => f(t));
+  composer.render();
+  if (!reduceMotion) requestAnimationFrame(frame);
+}
+frame();
+</script>

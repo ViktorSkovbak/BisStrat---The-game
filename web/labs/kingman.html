@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Kingman Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one production floor. Scene on top, the caption under it, then controls beside
+   the wait-vs-utilisation curve. Same dark hall as the machine page. */
+:root {
+  --hall: #0c0f13;
+  --plate: #141920;
+  --plate-2: #1b222b;
+  --line: #29323d;
+  --ink: #e8e3d7;
+  --ink-dim: #8d95a0;
+  --brass: #c9a25b;
+  --glow: #ffb547;
+  --cool: #7fb3d6;
+  --jam: #e5573f;
+  --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--hall); color: var(--ink); }
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { font-family: var(--body); font-size: 15px; line-height: 1.5; }
+[hidden] { display: none !important; }
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 18px 48px;
+  display: grid; gap: 18px;
+}
+.top { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: baseline; justify-content: space-between; }
+.back { color: var(--ink-dim); font-size: 13px; text-decoration: none; }
+.back:hover, .back:focus-visible { color: var(--brass); }
+h1 { font-family: var(--display); font-weight: 800; font-size: clamp(28px, 4.6vw, 42px); letter-spacing: .05em; text-transform: uppercase; margin: 0; line-height: 1.05; text-wrap: balance; }
+h1 small { display: block; font-size: 15px; font-family: var(--mono); color: var(--brass); letter-spacing: .1em; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 19px; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 10px; }
+.law { margin: 0; color: var(--ink-dim); max-width: 68ch; }
+.law b { color: var(--ink); font-family: var(--mono); font-weight: 500; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.scene { position: relative; height: clamp(300px, 52vh, 560px); border: 1px solid var(--line); background: radial-gradient(110% 90% at 50% 35%, #151b23, var(--hall) 72%); overflow: hidden; }
+.scene canvas { display: block; width: 100%; height: 100%; }
+.hud { position: absolute; top: 10px; left: 12px; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-dim); pointer-events: none; }
+.hud b { color: var(--ink); font-family: var(--mono); font-weight: 500; }
+.caption { margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-top: 0; background: var(--plate); font-size: 16px; }
+
+.cols { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.panel { background: var(--plate); border: 1px solid var(--line); padding: 16px; min-width: 0; }
+.ctl { display: grid; gap: 4px; margin-bottom: 14px; }
+.ctl label { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.ctl label span:last-child { font-family: var(--mono); color: var(--glow); }
+.ctl .hint { font-size: 12px; color: var(--ink-dim); }
+input[type=range] { width: 100%; accent-color: var(--brass); }
+input[type=range]:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; }
+button { font: 500 13px var(--body); color: var(--ink); background: var(--plate-2); border: 1px solid var(--line); padding: 7px 12px; cursor: pointer; }
+button:hover, button:focus-visible { border-color: var(--brass); outline: none; }
+.predict { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
+.predict .row { display: flex; gap: 8px; }
+.predict input { flex: 1; min-width: 0; font: 15px var(--mono); background: var(--hall); color: var(--ink); border: 1px solid var(--line); padding: 6px 8px; }
+.predict input:focus-visible { outline: 2px solid var(--brass); }
+.predict p { margin: 0; font-size: 13px; color: var(--ink-dim); }
+.predict p.res { color: var(--ink); }
+
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin-bottom: 14px; }
+.stat { background: var(--plate-2); padding: 10px 12px; min-width: 0; }
+.stat .k { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-dim); }
+.stat .v { font-family: var(--display); font-size: 26px; font-weight: 800; line-height: 1.1; }
+.stat .v small { font: 400 12px var(--body); color: var(--ink-dim); margin-left: 4px; }
+.chart-wrap { overflow-x: auto; }
+svg text { fill: var(--ink-dim); font-family: var(--mono); font-size: 11px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-dim); margin-top: 6px; }
+.legend i { display: inline-block; width: 14px; height: 3px; vertical-align: 3px; margin-right: 6px; }
+.note { font-size: 13px; color: var(--ink-dim); margin: 10px 0 0; max-width: 70ch; }
+
+@media (max-width: 820px) {
+  .cols { grid-template-columns: minmax(0, 1fr); }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1><small>Lab L01 · Operations &amp; queueing</small>Kingman's law</h1>
+    <a class="back" href="../" id="back">← Back to the machine</a>
+  </div>
+  <p class="law">Queue wait ≈ <b>V × U × T</b>. U = u/(1−u) explodes as the floor gets busy; V = (ca² + cs²)/2 is how uneven the work is; T is the average job time. Kingman, 1961. With several workers sharing one queue, the simulation uses Sakasegawa's multi-server form.</p>
+
+  <section aria-label="Production floor simulation">
+    <div class="scene" id="scene">
+      <div class="hud" aria-live="off">
+        <span>Clock <b id="h-clock">0</b> job-times</span>
+        <span>In queue <b id="h-q">0</b></span>
+        <span>Jobs done <b id="h-done">0</b></span>
+        <span>This run, avg wait <b id="h-wait">–</b></span>
+      </div>
+    </div>
+    <p class="caption" id="caption">Starting the floor.</p>
+  </section>
+
+  <div class="cols">
+    <section class="panel" aria-label="Controls">
+      <h2>The floor</h2>
+      <div class="ctl">
+        <label for="u"><span>Utilisation (how busy)</span><span id="u-out">90%</span></label>
+        <input type="range" id="u" min="50" max="98" step="1" value="90">
+      </div>
+      <div class="ctl">
+        <label for="c"><span>Workers sharing one queue</span><span id="c-out">1</span></label>
+        <input type="range" id="c" min="1" max="6" step="1" value="1">
+      </div>
+      <div class="ctl">
+        <label for="ca"><span>Arrival variability (ca)</span><span id="ca-out">1.0</span></label>
+        <input type="range" id="ca" min="0" max="1.5" step="0.1" value="1">
+        <span class="hint">0 = jobs arrive like clockwork; 1 = random (Poisson)</span>
+      </div>
+      <div class="ctl">
+        <label for="cs"><span>Job-size variability (cs)</span><span id="cs-out">1.0</span></label>
+        <input type="range" id="cs" min="0" max="1.5" step="0.1" value="1">
+        <span class="hint">0 = every job identical; 1 = highly uneven</span>
+      </div>
+      <div class="ctl">
+        <label for="speed"><span>Animation speed</span><span id="speed-out">3×</span></label>
+        <input type="range" id="speed" min="1" max="12" step="1" value="3">
+      </div>
+      <div class="btns">
+        <button id="reset" type="button">Restart the floor</button>
+        <button id="burst" type="button">Drop a burst of 15 jobs</button>
+      </div>
+
+      <div class="predict">
+        <h2>Predict first</h2>
+        <p>Before you move a slider, write your prediction of the average queue wait (in job-times) for the setting you are about to try. Then set it and check.</p>
+        <div class="row">
+          <input id="guess" inputmode="decimal" placeholder="e.g. 9" aria-label="Your predicted wait in job-times">
+          <button id="check" type="button">Check</button>
+        </div>
+        <p id="verdict" class="res" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <section class="panel" aria-label="Wait against utilisation">
+      <h2>Wait vs utilisation</h2>
+      <div class="stats">
+        <div class="stat"><div class="k">Formula</div><div class="v" id="s-formula">–<small>job-times</small></div></div>
+        <div class="stat"><div class="k">Measured</div><div class="v" id="s-measured">…<small>job-times</small></div></div>
+        <div class="stat"><div class="k">vs 80% busy</div><div class="v" id="s-ratio">–</div></div>
+        <div class="stat"><div class="k">Little's law</div><div class="v" id="s-little">–<small>jobs in queue</small></div></div>
+      </div>
+      <div class="chart-wrap"><svg id="chart" viewBox="0 0 640 340" width="100%" role="img" aria-label="Queue wait in job-times against utilisation: formula curve and measured simulation points"></svg></div>
+      <div class="legend">
+        <span><i style="background:var(--brass)"></i>formula (Kingman / Sakasegawa)</span>
+        <span><i style="background:var(--glow);height:8px;width:8px;border-radius:50%"></i>measured in simulation</span>
+        <span><i style="background:var(--cool)"></i>your setting</span>
+      </div>
+      <p class="note">Measured points come from simulating 60,000 jobs per point in the background. Near 100% they get noisy: the queue takes a very long time to settle, which is the same effect you are looking at.</p>
+    </section>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script>
+/* Shared queue maths: also shipped into the Monte Carlo worker as source text. */
+function gammaSample(mean, cv, rnd) {
+  if (cv <= 0.001) return mean;
+  const k = 1 / (cv * cv), theta = mean / k;
+  return gammaShape(k, rnd) * theta;
+}
+function gammaShape(k, rnd) {
+  if (k < 1) return gammaShape(k + 1, rnd) * Math.pow(rnd(), 1 / k);
+  const d = k - 1 / 3, c = 1 / Math.sqrt(9 * d);
+  for (;;) {
+    let x, v;
+    do { x = normal(rnd); v = 1 + c * x; } while (v <= 0);
+    v = v * v * v;
+    const u = rnd();
+    if (u < 1 - 0.0331 * x ** 4 || Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
+  }
+}
+function normal(rnd) {
+  const u = 1 - rnd(), v = rnd();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+function mulberry(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+/* Average queue wait (in mean job-times) for a G/G/c FIFO queue. */
+function simulateWait(u, c, ca, cs, jobs, seed) {
+  const rnd = mulberry(seed);
+  const meanGap = 1 / (u * c);
+  const free = new Array(c).fill(0);
+  let t = 0, total = 0, counted = 0;
+  const warm = Math.floor(jobs * 0.1);
+  for (let i = 0; i < jobs; i++) {
+    t += gammaSample(meanGap, ca, rnd);
+    let k = 0;
+    for (let j = 1; j < c; j++) if (free[j] < free[k]) k = j;
+    const start = Math.max(t, free[k]);
+    free[k] = start + gammaSample(1, cs, rnd);
+    if (i >= warm) { total += start - t; counted++; }
+  }
+  return total / counted;
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+const $ = (id) => document.getElementById(id);
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const P = { u: 0.9, c: 1, ca: 1, cs: 1, speed: 3 };
+
+// Back link: go back in history when we came from the machine page.
+$("back").addEventListener("click", (e) => { if (history.length > 1) { e.preventDefault(); history.back(); } });
+
+/* ---------- Formula ---------- */
+function formulaWait(u, c, ca, cs) {
+  const V = (ca * ca + cs * cs) / 2;
+  const U = Math.pow(u, Math.sqrt(2 * (c + 1)) - 1) / (c * (1 - u));
+  return V * U; // in job-times (T = 1)
+}
+const fmt = (x) => (x >= 100 ? x.toFixed(0) : x >= 10 ? x.toFixed(1) : x.toFixed(2));
+
+/* ---------- Monte Carlo in a worker ---------- */
+const src = [gammaSample, gammaShape, normal, mulberry, simulateWait].map(String).join("\n") +
+  `\nonmessage = (e) => { const { id, u, c, ca, cs, jobs } = e.data; postMessage({ id, u, w: simulateWait(u, c, ca, cs, jobs, 12345 + Math.round(u * 1000)) }); };`;
+const worker = new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+const GRID = [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.88, 0.9, 0.92, 0.94, 0.95, 0.96, 0.97, 0.98];
+let run = 0, measured = new Map(), current = null;
+worker.onmessage = (e) => {
+  const { id, u, w } = e.data;
+  if (id !== run) return;
+  if (Math.abs(u - P.u) < 1e-9) current = w;
+  measured.set(u, w);
+  draw();
+};
+function remeasure() {
+  run++; measured = new Map(); current = null;
+  const jobs = 60000;
+  const us = [...new Set([P.u, ...GRID])];
+  us.forEach((u) => worker.postMessage({ id: run, u, c: P.c, ca: P.ca, cs: P.cs, jobs: u >= 0.95 ? jobs * 3 : jobs }));
+  draw();
+}
+
+/* ---------- Chart ---------- */
+function draw() {
+  const W = 640, H = 340, L = 52, R = 16, T = 14, B = 40;
+  const ws = GRID.map((u) => formulaWait(u, P.c, P.ca, P.cs));
+  const maxY = Math.max(4, ...ws, ...[...measured.values()]) * 1.08;
+  const x = (u) => L + ((u - 0.5) / 0.5) * (W - L - R);
+  const y = (w) => H - B - (Math.min(w, maxY) / maxY) * (H - T - B);
+  const ticksY = niceTicks(maxY);
+  let s = "";
+  for (const t of ticksY) s += `<line x1="${L}" y1="${y(t)}" x2="${W - R}" y2="${y(t)}" stroke="var(--line)"/><text x="${L - 8}" y="${y(t) + 4}" text-anchor="end">${t}</text>`;
+  for (const u of [0.5, 0.6, 0.7, 0.8, 0.9, 1]) s += `<line x1="${x(u)}" y1="${T}" x2="${x(u)}" y2="${H - B}" stroke="var(--line)"/><text x="${x(u)}" y="${H - B + 16}" text-anchor="middle">${Math.round(u * 100)}%</text>`;
+  s += `<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle">utilisation</text>`;
+  s += `<text transform="translate(14 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle">queue wait (job-times)</text>`;
+  let d = "";
+  for (let u = 0.5; u <= 0.985; u += 0.005) d += `${d ? "L" : "M"}${x(u).toFixed(1)},${y(formulaWait(u, P.c, P.ca, P.cs)).toFixed(1)}`;
+  s += `<path d="${d}" fill="none" stroke="var(--brass)" stroke-width="2.5"/>`;
+  s += `<line x1="${x(P.u)}" y1="${T}" x2="${x(P.u)}" y2="${H - B}" stroke="var(--cool)" stroke-dasharray="4 4"/>`;
+  for (const [u, w] of measured) if (GRID.includes(u)) s += `<circle cx="${x(u)}" cy="${y(w)}" r="4.5" fill="var(--glow)"/>`;
+  const fw = formulaWait(P.u, P.c, P.ca, P.cs);
+  s += `<circle cx="${x(P.u)}" cy="${y(fw)}" r="7" fill="none" stroke="var(--cool)" stroke-width="2"/>`;
+  $("chart").innerHTML = s;
+
+  const w80 = formulaWait(0.8, P.c, P.ca, P.cs);
+  $("s-formula").innerHTML = `${fmt(fw)}<small>job-times</small>`;
+  $("s-measured").innerHTML = current == null ? `…<small>simulating</small>` : `${fmt(current)}<small>job-times</small>`;
+  $("s-ratio").innerHTML = `${(fw / w80).toFixed(1)}×`;
+  const lam = P.u * P.c; // jobs per job-time
+  $("s-little").innerHTML = `${fmt(lam * (current ?? fw))}<small>jobs in queue</small>`;
+  const wkr = P.c === 1 ? "one worker" : `${P.c} workers`;
+  const shown = current ?? fw;
+  $("caption").textContent = Math.abs(P.u - 0.8) < 0.005
+    ? `Floor at 80% busy with ${wkr}: jobs wait ${fmt(shown)} job-times in the queue before anyone touches them.`
+    : `Floor at ${Math.round(P.u * 100)}% busy with ${wkr}: jobs wait ${fmt(shown)} job-times in the queue, ${(fw / w80).toFixed(1)}× as long as at 80%.`;
+}
+function niceTicks(max) {
+  const step = [1, 2, 5, 10, 20, 25, 50, 100].find((s) => max / s <= 6) || 200;
+  const out = [];
+  for (let t = 0; t <= max; t += step) out.push(t);
+  return out;
+}
+
+/* ---------- Controls ---------- */
+function bind(id, key, scale, label) {
+  const el = $(id);
+  const set = () => { P[key] = Number(el.value) * scale; $(`${id}-out`).textContent = label(P[key]); };
+  el.addEventListener("input", () => { set(); if (key !== "speed") { sim.retune(); remeasureSoon(); } });
+  set();
+}
+let t0;
+function remeasureSoon() { clearTimeout(t0); t0 = setTimeout(remeasure, 180); draw(); }
+bind("u", "u", 0.01, (v) => `${Math.round(v * 100)}%`);
+bind("c", "c", 1, (v) => String(v));
+bind("ca", "ca", 1, (v) => v.toFixed(1));
+bind("cs", "cs", 1, (v) => v.toFixed(1));
+bind("speed", "speed", 1, (v) => `${v}×`);
+$("check").addEventListener("click", () => {
+  const g = parseFloat($("guess").value.replace(",", "."));
+  if (!isFinite(g)) { $("verdict").textContent = "Enter a number of job-times, for example 9."; return; }
+  const truth = current ?? formulaWait(P.u, P.c, P.ca, P.cs);
+  const ratio = g / truth;
+  const off = ratio >= 1 ? `${ratio.toFixed(1)}× too high` : `${(1 / ratio).toFixed(1)}× too low`;
+  $("verdict").textContent = Math.abs(Math.log(ratio)) < Math.log(1.25)
+    ? `Within 25%: you said ${g}, the floor gives ${fmt(truth)}. Calibrated.`
+    : `You said ${g}; the floor gives ${fmt(truth)} (${off}). Most people underestimate the wait at high load.`;
+});
+
+/* ---------- The animated floor ---------- */
+const host = $("scene");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.85;
+host.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+// Metals need something to reflect; a neutral room keeps brass and steel readable.
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 300);
+camera.position.set(40, 40, 40); camera.lookAt(0, 0, 0);
+scene.add(new THREE.HemisphereLight(0x6f8aa6, 0x0b0d10, 0.6));
+const key = new THREE.DirectionalLight(0xffe2b0, 1.5);
+key.position.set(-20, 40, 15); key.castShadow = true; key.shadow.mapSize.set(2048, 2048);
+Object.assign(key.shadow.camera, { left: -20, right: 20, top: 20, bottom: -20 });
+scene.add(key);
+
+const M = {
+  floor: new THREE.MeshStandardMaterial({ color: 0x12161c, roughness: 0.95 }),
+  dark: new THREE.MeshStandardMaterial({ color: 0x2c333d, metalness: 0.6, roughness: 0.45 }),
+  steel: new THREE.MeshStandardMaterial({ color: 0x5b6774, metalness: 0.8, roughness: 0.35 }),
+  brass: new THREE.MeshStandardMaterial({ color: 0xb8893f, metalness: 0.9, roughness: 0.32 }),
+  belt: new THREE.MeshStandardMaterial({ color: 0x1d232b, metalness: 0.3, roughness: 0.8 }),
+};
+function box(w, h, d, mat, x, y, z) { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y + h / 2, z); m.castShadow = m.receiveShadow = true; scene.add(m); return m; }
+
+const fl = new THREE.Mesh(new THREE.BoxGeometry(34, 0.4, 22), M.floor); fl.position.y = -0.2; fl.receiveShadow = true; scene.add(fl);
+const grid = new THREE.GridHelper(34, 34, 0x1e252e, 0x171c23); grid.position.y = 0.01; scene.add(grid);
+
+// Layout along x: inbound belt (x -16..-9), queue yard (x -9..1), stations (x 3), outbound belt (x 5..16)
+box(7, 0.3, 1.4, M.belt, -12.5, 0, 0);
+box(11, 0.3, 1.4, M.belt, 10.5, 0, 0);
+box(10.6, 0.08, 8.6, M.dark, -4, 0, 0);
+const QCOLS = 10, QROWS = 8, QMAX = QCOLS * QROWS;
+function queueSlot(i) { // serpentine from the front of the yard backwards
+  const row = Math.floor(i / QCOLS), col = i % QCOLS;
+  const cx = row % 2 ? col : QCOLS - 1 - col;
+  return new THREE.Vector3(-8.5 + cx * 1.0, 0.1, -3.5 + row * 1.0);
+}
+const stations = [];
+const workerMat = () => new THREE.MeshStandardMaterial({ color: 0x2a1a05, emissive: 0xffb547, emissiveIntensity: 0.3 });
+function buildStations() {
+  stations.forEach((s) => { scene.remove(s.desk); scene.remove(s.light); });
+  stations.length = 0;
+  for (let k = 0; k < P.c; k++) {
+    const z = (k - (P.c - 1) / 2) * 1.8;
+    const desk = box(1.4, 0.8, 1.2, M.steel, 3, 0, z);
+    const light = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 10), workerMat());
+    light.position.set(3, 1.6, z); scene.add(light);
+    stations.push({ desk, light, z });
+  }
+}
+
+const crateGeo = new THREE.BoxGeometry(0.7, 0.55, 0.7);
+const crates = new Set();
+function newCrate() {
+  const m = new THREE.Mesh(crateGeo, M.brass); m.castShadow = true;
+  m.position.set(-16, 0.3, 0); scene.add(m);
+  const c = { mesh: m, target: m.position.clone(), out: false, born: 0 }; crates.add(c); return c;
+}
+
+/* Event-driven simulation, advanced by the animation clock */
+const sim = {
+  clock: 0, nextArrival: 0, queue: [], busy: [], done: 0, waitSum: 0, rnd: mulberry(7),
+  reset() {
+    crates.forEach((c) => scene.remove(c.mesh)); crates.clear();
+    this.clock = 0; this.queue = []; this.done = 0; this.waitSum = 0;
+    buildStations(); this.busy = new Array(P.c).fill(null);
+    this.nextArrival = gammaSample(1 / (P.u * P.c), P.ca, this.rnd);
+  },
+  retune() { // keep the queue, change the floor
+    if (this.busy.length !== P.c) {
+      const waiting = this.busy.filter(Boolean);
+      buildStations(); this.busy = new Array(P.c).fill(null);
+      waiting.forEach((j) => { j.crate.out = true; j.crate.target.set(16, 0.3, 0); });
+    }
+    this.done = 0; this.waitSum = 0;
+  },
+  arrive(t) {
+    const crate = newCrate();
+    this.queue.push({ arrived: t, crate });
+  },
+  step(dt) {
+    const end = this.clock + dt;
+    for (;;) {
+      const nextFinish = Math.min(...this.busy.map((j) => (j ? j.finish : Infinity)));
+      const tNext = Math.min(this.nextArrival, nextFinish);
+      if (tNext > end) break;
+      this.clock = tNext;
+      if (tNext === this.nextArrival) {
+        this.arrive(tNext);
+        this.nextArrival = tNext + gammaSample(1 / (P.u * P.c), P.ca, this.rnd);
+      } else {
+        const k = this.busy.findIndex((j) => j && j.finish === tNext);
+        const j = this.busy[k]; this.busy[k] = null;
+        j.crate.out = true; j.crate.target.set(16, 0.3, stations[k] ? stations[k].z * 0.2 : 0);
+      }
+      this.dispatch();
+    }
+    this.clock = end;
+    this.dispatch();
+  },
+  dispatch() {
+    for (let k = 0; k < this.busy.length; k++) {
+      if (!this.busy[k] && this.queue.length) {
+        const j = this.queue.shift();
+        j.finish = this.clock + gammaSample(1, P.cs, this.rnd);
+        this.waitSum += this.clock - j.arrived; this.done++;
+        j.crate.target.set(3, 0.85, stations[k].z);
+        this.busy[k] = j;
+      }
+    }
+  },
+  burst(n) { for (let i = 0; i < n; i++) this.arrive(this.clock); this.dispatch(); },
+};
+$("reset").addEventListener("click", () => sim.reset());
+$("burst").addEventListener("click", () => sim.burst(15));
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.9, 0.5, 0.8));
+composer.addPass(new OutputPass());
+function resize() {
+  const w = host.clientWidth, h = host.clientHeight, a = w / h;
+  renderer.setSize(w, h, false); composer.setSize(w, h);
+  const v = a < 1.2 ? 27 / a : 20;
+  Object.assign(camera, { left: (-v * a) / 2, right: (v * a) / 2, top: v / 2, bottom: -v / 2 });
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(host);
+resize();
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  sim.step(dt * P.speed * 0.5);
+  sim.queue.forEach((j, i) => {
+    if (i < QMAX) { j.crate.target.copy(queueSlot(i)); j.crate.mesh.visible = true; }
+    else j.crate.mesh.visible = false;
+  });
+  for (const c of crates) {
+    c.mesh.position.lerp(c.target, Math.min(1, dt * 6));
+    if (c.out && c.mesh.position.x > 15.5) { scene.remove(c.mesh); crates.delete(c); }
+  }
+  sim.busy.forEach((j, k) => { if (stations[k]) stations[k].light.material.emissiveIntensity = j ? 3 : 0.25; });
+  $("h-clock").textContent = sim.clock.toFixed(0);
+  $("h-q").textContent = sim.queue.length > QMAX ? `${sim.queue.length} (${sim.queue.length - QMAX} off-screen)` : sim.queue.length;
+  $("h-done").textContent = sim.done;
+  $("h-wait").textContent = sim.done ? fmt(sim.waitSum / sim.done) : "–";
+  composer.render();
+  if (!reduceMotion) requestAnimationFrame(frame);
+}
+sim.reset();
+remeasure();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

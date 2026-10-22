@@ -152,7 +152,8 @@ def _graded(state: State, e: dict, day: date) -> int:
         weight = 1.0 if i == 0 else rules.SECONDARY_AREA_WEIGHT
         area.rating = rules.elo_update(area.rating, e["difficulty"], grade, area.items, weight)
         area.items += 1
-        area.passed = area.passed or grade >= 0.5
+        # Only the primary area builds its machine part; secondary tags move the rating only.
+        area.passed = area.passed or (i == 0 and grade >= 0.5)
         area.grades.append(grade)
         area.history.append((day, area.rating))
         area.last_active = day
